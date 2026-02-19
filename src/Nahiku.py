@@ -92,6 +92,13 @@ class Dipper:
     def plot(self):
         pass
 
+    def standardize(self):
+        """
+        Function to standardize the flux of the light curve by subtracting the mean and dividing by the standard deviation.
+        This is important for the periodogram calculation and GP modeling, as it ensures that the data is on a consistent scale and that the periodogram is not dominated by the mean flux level.
+        """
+        self.flux = (self.flux - np.mean(self.flux)) / np.std(self.flux)
+
     def prewhiten(self, ....):
         prew_t, prew_f = Balmung.()
         return Dipper(prew_t, prew_f)
@@ -108,9 +115,9 @@ class Dipper:
         # Check if data is standardized
         if np.std(self.flux) != 1:
             UserWarning(
-                "Data is not standardized, so internally this function will standardize it for periodogram calculation."
+                "Data is not standardized, so will standardize it for periodogram calculation."
             )
-            self.flux = (self.flux - np.mean(self.flux)) / np.std(self.flux)
+            self.standardize()
 
         # Get peaks in power spectrum
         freqs, power = periodogram(self.flux)

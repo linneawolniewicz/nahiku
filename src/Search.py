@@ -153,7 +153,7 @@ class Search:
 
         return mean
 
-    def build_gp(
+    def build_gp_model(
         self,
         x=None,
         y=None,
@@ -185,7 +185,7 @@ class Search:
             mean=mean
         ).to(device)
 
-        return gp
+        return gp, likelihood, kernel, mean
 
     def train_gp(
         self,
