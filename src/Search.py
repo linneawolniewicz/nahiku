@@ -4,7 +4,7 @@ import warnings
 import numpy as np
 import matplotlib.pyplot as plt
 
-from nahiku.src.kernels import QuasiPeriodicKernel, ExactGPModel
+from nahiku.src.gp_helpers import QuasiPeriodicKernel, ExactGPModel
 
 from abc import abstractmethod
 from gpytorch.mlls import ExactMarginalLogLikelihood
@@ -48,6 +48,12 @@ class Search:
         self.flagged_anomalous = np.zeros_like(self.x, dtype=bool)
         self.anomalous_signal = np.zeros_like(self.x)
         self.runtime = 0
+
+    # TODO: build the initialize_priors function to initialize the constraints based on dominant period, and make clear the hard-coded constants.
+    def initialize_priors(self):
+        # initialize kernels here
+        self.rbf_lengthscale_constraint = None
+        pass
 
     def build_kernel(self):
         """

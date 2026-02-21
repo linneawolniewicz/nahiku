@@ -180,24 +180,30 @@ class GreedySearch(Search):
 
     def search_for_anomaly(
         self,
-        training_iterations=1_000,
-        lr=0.01,
-        which_train_metric="mll",  # 'mse' or 'mll'
-        which_opt="adam",  # Which optimizer to use. Options are 'adam' or 'sgd'
-        early_stopping=True,
-        min_iterations=150,  # If early_stop is True, minimum number of iterations to run before stopping
-        patience=1,  # If early_stop is True, number of iterations to wait before stopping
-        set_noise_equal_to_var_residuals=True,
-        refit=True,  # Whether to refit the GP at each iteration
-        neg_anomaly_only=False, # Whether to only flag negative anomalies (i.e., dips)
-        pos_anomaly_only=False, # Whether to only flag positive anomalies (i.e., flares)
+        refit=True,  
+        neg_anomaly_only=False,
+        pos_anomaly_only=False, 
         plot=False,
         detection_range=None,
         update_threshold=False,
+        training_iterations=1_000,
+        lr=0.01,
+        which_train_metric="mll",  
+        which_opt="adam", 
+        early_stopping=True,
+        min_iterations=150,  
+        patience=1, 
+        set_noise_equal_to_var_residuals=True,
     ):
         """
         Main function to perform the greedy search for anomalies in the time series data.
         
+        :param refit (bool): Whether to refit the GP model at each iteration of the greedy search (default: True)
+        :param neg_anomaly_only (bool): Whether to only flag negative anomalies (i.e., dips) instead of both positive and negative anomalies (default: False)
+        :param pos_anomaly_only (bool): Whether to only flag positive anomalies (i.e., flares) instead of both positive and negative anomalies (default: False)
+        :param plot (bool): Whether to the light curve, GP fit, and detected anomalies at each iteration of the greedy search (default: False)
+        :param detection_range (tuple or None): Tuple specifying the range of x values to consider for anomaly detection. If None, considers the entire range of x. Default is None.
+        :param update_threshold (bool): Whether to update the num_sigma_threshold after each detected anomaly
         :param training_iterations (int): maximum number of training iterations (default: 1000)
         :param lr (float): learning rate for the optimizer (default: 0.01)
         :param which_train_metric (str): Metric to use for evaluating improvement during training. Options are 'mll' for marginal log likelihood and 'mse' for mean squared error. Default is 'mll'.
@@ -206,12 +212,6 @@ class GreedySearch(Search):
         :param min_iterations (int or None): Minimum number of iterations to train before considering early stopping (default: None, which sets it to training_iterations // 10)
         :param patience (int): Number of consecutive iterations with increasing loss to wait before stopping when early_stopping is True (default: 1)
         :param set_noise_equal_to_var_residuals (bool): Whether to set the likelihood noise variance equal to the variance of the residuals after training (default: False)
-        :param refit (bool): Whether to refit the GP model at each iteration of the greedy search (default: True)
-        :param neg_anomaly_only (bool): Whether to only flag negative anomalies (i.e., dips) instead of both positive and negative anomalies (default: False)
-        :param pos_anomaly_only (bool): Whether to only flag positive anomalies (i.e., flares) instead of both positive and negative anomalies (default: False)
-        :param plot (bool): Whether to the light curve, GP fit, and detected anomalies at each iteration of the greedy search (default: False)
-        :param detection_range (tuple or None): Tuple specifying the range of x values to consider for anomaly detection. If None, considers the entire range of x. Default is None.
-        :param update_threshold (bool): Whether to update the num_sigma_threshold after each detected anomaly
         """
         start_time = time.time()
 
