@@ -5,7 +5,7 @@ import warnings
 import numpy as np
 import matplotlib.pyplot as plt
 
-from nahiku.src.Search import Search
+from Search import Search
 
 from gpytorch.mlls import ExactMarginalLogLikelihood
 from scipy.ndimage import minimum_filter1d

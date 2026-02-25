@@ -6,8 +6,8 @@ import warnings
 import numpy as np
 import matplotlib.pyplot as plt
 
-from nahiku.src.Search import Search
-from nahiku.src.exhaustive_helpers import precompute_precision, interval_posterior_from_precision, compute_interval_pvalue
+from Search import Search
+from exhaustive_helpers import precompute_precision, interval_posterior_from_precision, compute_interval_pvalue
 
 from gpytorch.mlls import ExactMarginalLogLikelihood
 

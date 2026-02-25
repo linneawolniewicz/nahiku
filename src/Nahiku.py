@@ -6,9 +6,9 @@ import matplotlib.pyplot as plt
 import lightkurve
 import warnings
 
-from nahiku.src.ExhaustiveSearch import ExhaustiveSearch
-from nahiku.src.GreedySearch import GreedySearch
-from nahiku.src.gp_helpers import QuasiPeriodicKernel
+from ExhaustiveSearch import ExhaustiveSearch
+from GreedySearch import GreedySearch
+from gp_helpers import QuasiPeriodicKernel
 
 from balmung import Balmung
 from scipy.signal import find_peaks, periodogram, windows, peak_prominences
@@ -364,13 +364,13 @@ class Nahiku:
         """
 
         plt.figure(figsize=(8, 5))
-        plt.plot(self.time, self.flux, c='k', ms=3, alpha=0.5, label="Light Curve")
+        plt.scatter(self.time, self.flux, c='k', s=3, alpha=0.5, label="Light Curve")
 
         # If there are any anomaly indices in self.anomalies, plot them with different colors
         # Plot identified anaomlies as red, and highlight injected anomaly areas in yellow and true anomaly areas in blue
         if self.anomalies['identified']:
             anomaly_locs = self.anomalies['identified']
-            plt.scatter(self.time[anomaly_locs], self.flux[anomaly_locs], c='red', ms=5, alpha=0.7, label="Identified Anomaly")
+            plt.scatter(self.time[anomaly_locs], self.flux[anomaly_locs], c='red', s=5, alpha=0.7, label="Identified Anomaly")
 
         if self.anomalies['injected']:
             # For each consecutive sequence of injected anomalies, highlight the area in yellow with plt.axvspan

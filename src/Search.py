@@ -4,7 +4,7 @@ import warnings
 import numpy as np
 import matplotlib.pyplot as plt
 
-from nahiku.src.gp_helpers import QuasiPeriodicKernel, ExactGPModel
+from gp_helpers import QuasiPeriodicKernel, ExactGPModel
 
 from abc import abstractmethod
 from gpytorch.mlls import ExactMarginalLogLikelihood
