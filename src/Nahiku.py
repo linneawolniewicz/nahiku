@@ -1,3 +1,6 @@
+
+import gpytorch
+import torch
 import numpy as np
 import matplotlib.pyplot as plt
 import lightkurve
@@ -5,13 +8,21 @@ import warnings
 
 from nahiku.src.ExhaustiveSearch import ExhaustiveSearch
 from nahiku.src.GreedySearch import GreedySearch
-from nahiku.src.nahiku_helpers import freq_idx_to_period_days
+from nahiku.src.gp_helpers import QuasiPeriodicKernel
 
 from balmung import Balmung
 from scipy.signal import find_peaks, periodogram, windows, peak_prominences
 from scipy.ndimage import gaussian_filter1d
+from gpytorch.means import ConstantMean
+from gpytorch.kernels import ScaleKernel
+from gpytorch.distributions import MultivariateNormal
 
 class Nahiku:
+    """
+    This class represents a light curve and provides methods for anomaly detection using greedy and exhaustive search, as well as methods for plotting, 
+    standardizing, prewhitening, calculating the dominant period, injecting anomalies, and checking the accuracy of identified anomalies against true and injected anomalies.
+    """
+
     def __init__(
             self,
             time,
@@ -68,7 +79,7 @@ class Nahiku:
         return Nahiku(time, flux, **init_args)
 
     @staticmethod
-    def from_synthetic_parameterized(
+    def from_synthetic_parameterized_noise(
         rednoise_amp=1.0,
         whitenoise_amp=1.0,
         num_steps=1000,
@@ -156,8 +167,136 @@ class Nahiku:
         return Nahiku(x, y, **kwargs)
 
     @staticmethod
-    def from_synthetic_sampled(....):
-        return Nahiku(artificial_time, artificial_flux, ...)
+    def from_synthetic_parameterized_gp(
+        seed=48,
+        num_days=80,
+        num_steps=3000,
+        add_high_residuals=False,
+        device="cpu",
+        mean_constant=None,
+        outputscale=None,
+        periodic_lengthscale=None,
+        period=None,
+        rbf_lengthscale=None,
+        noise_std=None,
+        num_high_residuals=None,
+        mean_high_residuals=None,
+        var_high_residuals=None,
+        **kwargs
+    ):
+        """
+        Sample a function from a Gaussian Process with a scaled quasi-periodic kernel, constant mean, and Gaussian likelihood, 
+        with options to specify various parameters for the kernel, mean function, likelihood noise, and number high residuals to add in.
+
+        :param seed (int): random seed for reproducibility (default: 48)
+        :param num_days (float): total duration of the light curve in days (default: 80)
+        :param num_steps (int): number of time steps in the light curve (default: 3000)
+        :param add_high_residuals (bool): whether to add high residuals to the sampled function to create more challenging anomalies (default: False)
+        :param device (str): device to use for GP sampling, either "cpu" or "cuda" (default: "cpu")
+        :param mean_constant (float or None): constant value for the mean function. 
+                If not provided, randomly chosen between -1 and 1 (Optional)
+        :param outputscale (float or None): output scale for the scaled quasi-periodic kernel. 
+                If not provided, randomly chosen between 0.1 and 10 (Optional)
+        :param periodic_lengthscale (float or None): length scale for the periodic component of the quasi-periodic kernel. 
+                If not provided, randomly chosen between 0.5 and num_days/4 (Optional)
+        :param period (float or None): period for the periodic component of the quasi-periodic kernel. 
+                If not provided, randomly chosen between 0.5 and num_days (Optional)
+        :param rbf_lengthscale (float or None): length scale for the RBF component of the quasi-periodic kernel. 
+                If not provided, randomly chosen between 0.5 and num_days/2 (Optional)
+        :param noise_std (float or None): standard deviation of the Gaussian noise to add to the sampled function. 
+                If not provided, randomly chosen between 0.1 and 1 (Optional)
+        :param num_high_residuals (int or None): number of high residuals to add to the sampled function if add_high_residuals is True.
+                If not provided, randomly chosen between 5 and 25 (Optional)
+        :param mean_high_residuals (float or None): mean of the Gaussian distribution to sample the high residuals from if add_high_residuals is True. 
+                If not provided, randomly chosen between -1 and 1 (Optional)
+        :param var_high_residuals (float or None): variance of the Gaussian distribution to sample the high residuals from if add_high_residuals is True. 
+                If not provided, randomly chosen between 0.1 and 10 (Optional)
+        :param **kwargs: Additional keyword arguments to pass to Nahiku.__init__
+        """
+        
+        rng = np.random.default_rng(seed=seed)
+
+        # Sample missing parameters if not given
+        if mean_constant is None:
+            mean_constant = rng.uniform(-1, 1) 
+
+        if outputscale is None:
+            outputscale = rng.uniform(0.1, 10) 
+
+        if periodic_lengthscale is None:
+            periodic_lengthscale = rng.uniform(0.5, num_days / 4) 
+
+        if period is None:
+            period = rng.uniform(0.5, num_days) 
+
+        if rbf_lengthscale is None:
+            rbf_lengthscale = rng.uniform(0.5, num_days / 2) 
+
+        if noise_std is None:
+            noise_std = rng.uniform(0.1, 1) 
+
+        if num_high_residuals is None:
+            num_high_residuals = rng.integers(5, 25) 
+
+        if mean_high_residuals is None:
+            mean_high_residuals = rng.uniform(-1, 1) 
+
+        if var_high_residuals is None:
+            var_high_residuals = rng.uniform(0.1, 10) 
+
+        # Define timesteps, y as Gaussian noise, and noise
+        x_sample = torch.linspace(0, num_days, num_steps).to(device)
+
+        # Initialize a scaled quasi-periodic kernel with the specified parameters
+        kernel = ScaleKernel(QuasiPeriodicKernel())
+        kernel.outputscale = outputscale
+        kernel.base_kernel.periodic_kernel.period_length = period
+        kernel.base_kernel.periodic_kernel.lengthscale = periodic_lengthscale
+        kernel.base_kernel.rbf_kernel.lengthscale = rbf_lengthscale
+
+        # Initialize a constant mean function with the specified mean constant
+        mean = ConstantMean()
+        mean.constant = mean_constant
+
+        # Sample from the MultivariateNormal defined by the parameterized kernel and mean
+        with torch.no_grad(), gpytorch.settings.fast_pred_var():
+            mean_x = mean(x_sample).cpu()
+            covar_x = kernel(x_sample).cpu()
+            mvn = MultivariateNormal(mean_x, covar_x)
+
+        # Sample from the MultivariateNormal
+        sample = mvn.sample(sample_shape=torch.Size(1))
+
+        # Add uncorrelated gaussian noise with noise_std
+        noisy_sample = sample.cpu().numpy()
+        noisy_sample += np.random.normal(0, noise_std, size=noisy_sample.shape)
+
+        # Convert to numpy for further processing
+        x = x_sample.detach().cpu().numpy()
+        sample = noisy_sample
+
+        if add_high_residuals:
+            # Sample num_residuals from a normal distribution with mean mean_residuals and std of sqrt(var_residuals)
+            num_high_residuals = int(num_high_residuals)
+            residuals = np.random.normal(
+                loc=mean_high_residuals,
+                scale=np.sqrt(var_high_residuals),
+                size=num_high_residuals,
+            )
+
+            # Randomly flip signs with 50% probability
+            signs = np.random.choice([1, -1], size=num_high_residuals)
+            residuals *= signs
+
+            high_residual_indices = np.random.choice(
+                len(x), num_high_residuals, replace=False
+            )
+
+            # Add the high residuals to the sample at the randomly chosen indices
+            for idx_res, idx_sample in enumerate(high_residual_indices):
+                sample[idx_sample] += residuals[idx_res]
+
+        return Nahiku(x, sample, **kwargs)
 
     def greedy_search(self, **kwargs):
         """
@@ -296,6 +435,20 @@ class Nahiku:
 
         return Nahiku(bm.time, bm.residual, **init_args)
 
+    @staticmethod
+    def freq_idx_to_period_days(freqs_idx, times):
+        """
+        Function to convert frequency indices from a periodogram to periods in days, using the time points of the original data to calculate the scaling factor for the conversion.
+        
+        :param freqs_idx (1D array-like): Array of frequency indices to convert to periods in days.
+        :param times (1D array-like): Array of time points corresponding to the original data, used to calculate the scaling factor for converting frequency indices to periods in days.
+        """
+        idx_day_scale_factor = (times[-1] - times[0]) / len(times)
+        periods = 1 / freqs_idx
+        periods_days = periods * idx_day_scale_factor
+
+        return periods_days
+
     def get_dominant_period(self, prominence=50, plot=False):
         """
         Function to calculate the dominant period of a light curve using the periodogram and peak detection. 
@@ -319,7 +472,7 @@ class Nahiku:
             smooth_power = gaussian_filter1d(power, 2)
             slope = np.gradient(smooth_power, freqs)
             shoulder_idx = np.where(slope < 0)[0][0]
-            dominant_period = min(freq_idx_to_period_days(freqs[shoulder_idx], self.time), self.time[-1])
+            dominant_period = min(self.freq_idx_to_period_days(freqs[shoulder_idx], self.time), self.time[-1])
 
         else:
             # Filter to most prominent peak
@@ -337,28 +490,28 @@ class Nahiku:
                 right_bases = right_bases[valid_peaks]
 
             max_peak = np.argmax(power[peaks])
-            dominant_period = freq_idx_to_period_days(freqs[peaks[max_peak]], self.time)
+            dominant_period = self.freq_idx_to_period_days(freqs[peaks[max_peak]], self.time)
 
         # Plot periodogram
         if plot:
             fig, axs = plt.subplots(1, 2, figsize=(15, 5))
-            axs[0].plot(freq_idx_to_period_days(freqs, self.time), power, label="Periodogram")
+            axs[0].plot(self.freq_idx_to_period_days(freqs, self.time), power, label="Periodogram")
             if len(peaks) > 0:
                 axs[0].plot(
-                    freq_idx_to_period_days(freqs[peaks], self.time),
+                    self.freq_idx_to_period_days(freqs[peaks], self.time),
                     power[peaks],
                     "x",
                     label="Peaks",
                 )
                 axs[0].plot(
-                    freq_idx_to_period_days(freqs[left_bases], self.time),
+                    self.freq_idx_to_period_days(freqs[left_bases], self.time),
                     power[left_bases],
                     "o",
                     c="gray",
                     label="Right bases",
                 )  # Reversed bc period = 1/frequency
                 axs[0].plot(
-                    freq_idx_to_period_days(freqs[right_bases], self.time),
+                    self.freq_idx_to_period_days(freqs[right_bases], self.time),
                     power[right_bases],
                     "o",
                     c="black",
@@ -366,7 +519,7 @@ class Nahiku:
                 )  # Reversed bc period = 1/frequency
             else:
                 axs[0].plot(
-                    freq_idx_to_period_days(freqs[shoulder_idx:], self.time),
+                    self.freq_idx_to_period_days(freqs[shoulder_idx:], self.time),
                     power[shoulder_idx:],
                     "x",
                     label="Shoulder",
