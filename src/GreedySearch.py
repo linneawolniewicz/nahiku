@@ -136,8 +136,8 @@ class GreedySearch(Search):
         )
         axs[0].legend()
         axs[0].set_xlim(np.min(self.x_orig), np.max(self.x_orig))
-        axs[0].set_xlabel("Time [days]")
-        axs[0].set_ylabel("Standardized Flux")
+        axs[0].set_xlabel("Time")
+        axs[0].set_ylabel("Flux")
 
         # Plot the residuals
         axs[1].axvspan(
@@ -175,8 +175,8 @@ class GreedySearch(Search):
         )
         axs[1].legend()
         axs[1].set_xlim(np.min(self.x_orig), np.max(self.x_orig))
-        axs[1].set_xlabel("Time [days]")
-        axs[1].set_ylabel("Standardized Flux")
+        axs[1].set_xlabel("Time")
+        axs[1].set_ylabel("Flux")
         plt.tight_layout()
         plt.show()
 
@@ -189,14 +189,7 @@ class GreedySearch(Search):
         plot=False,
         detection_range=None,
         update_threshold=False,
-        training_iterations=1_000,
-        lr=0.01,
-        which_train_metric="mll",  
-        which_opt="adam", 
-        early_stopping=True,
-        min_iterations=150,  
-        patience=1, 
-        set_noise_equal_to_var_residuals=True,
+        **kwargs
     ):
         """
         Main function to perform the greedy search for anomalies in the time series data.
@@ -207,14 +200,7 @@ class GreedySearch(Search):
         :param plot (bool): Whether to the light curve, GP fit, and detected anomalies at each iteration of the greedy search (default: False)
         :param detection_range (tuple or None): Tuple specifying the range of x values to consider for anomaly detection. If None, considers the entire range of x. Default is None.
         :param update_threshold (bool): Whether to update the num_sigma_threshold after each detected anomaly
-        :param training_iterations (int): maximum number of training iterations (default: 1000)
-        :param lr (float): learning rate for the optimizer (default: 0.01)
-        :param which_train_metric (str): Metric to use for evaluating improvement during training. Options are 'mll' for marginal log likelihood and 'mse' for mean squared error. Default is 'mll'.
-        :param which_opt (str): Optimizer to use for training. Options are 'adam' and 'sgd'. Default is 'adam'.
-        :param early_stopping (bool): Whether to use early stopping based on the training loss (default: True)
-        :param min_iterations (int or None): Minimum number of iterations to train before considering early stopping (default: None, which sets it to training_iterations // 10)
-        :param patience (int): Number of consecutive iterations with increasing loss to wait before stopping when early_stopping is True (default: 1)
-        :param set_noise_equal_to_var_residuals (bool): Whether to set the likelihood noise variance equal to the variance of the residuals after training (default: False)
+        **kwargs: Additional keyword arguments to pass to the GP training function, such as training_iterations, lr, early_stopping, etc.
         """
         start_time = time.time()
 
@@ -228,15 +214,7 @@ class GreedySearch(Search):
             x=self.x_tensor,
             y=self.y_tensor,
             device=self.device,
-            training_iterations=training_iterations,
-            lr=lr,
-            which_metric=which_train_metric,
-            which_opt=which_opt,
-            early_stopping=early_stopping,
-            min_iterations=min_iterations,
-            patience=patience,
-            plot=plot,
-            set_noise_equal_to_var_residuals=set_noise_equal_to_var_residuals,
+            **kwargs
         )
 
         # Update kernel and mean with learned parameters
@@ -268,15 +246,7 @@ class GreedySearch(Search):
                     x=self.x_tensor,
                     y=self.y_tensor,
                     device=self.device,
-                    training_iterations=training_iterations,
-                    lr=lr,
-                    which_metric=which_train_metric,
-                    which_opt=which_opt,
-                    early_stopping=early_stopping,
-                    min_iterations=min_iterations,
-                    patience=patience,
-                    plot=plot,
-                    set_noise_equal_to_var_residuals=set_noise_equal_to_var_residuals,
+                    **kwargs
                 )
 
             # Get mean prediction from the learned model over x and x_orig
@@ -327,15 +297,7 @@ class GreedySearch(Search):
                         x=x_sub,
                         y=y_sub,
                         device=self.device,
-                        training_iterations=training_iterations,
-                        lr=lr,
-                        which_metric=which_train_metric,
-                        which_opt=which_opt,
-                        early_stopping=early_stopping,
-                        min_iterations=min_iterations,
-                        patience=patience,
-                        plot=plot,
-                        set_noise_equal_to_var_residuals=set_noise_equal_to_var_residuals,
+                        **kwargs
                     )
 
                 # Predict on the subset and on the full x_orig

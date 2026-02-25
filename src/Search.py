@@ -49,15 +49,106 @@ class Search:
         self.anomalous_signal = np.zeros_like(self.x)
         self.runtime = 0
 
-    # TODO: build the initialize_priors function to initialize the constraints based on dominant period, and make clear the hard-coded constants.
-    def initialize_priors(self):
-        # initialize kernels here
-        self.rbf_lengthscale_constraint = None
+        # Initialize the constraints on the GP model
+        self.build_constraints()
+
+    def build_constraints(self):
+        """
+        Build the constraints for the GP model parameters.
+        """
+        # Initialize likelihood noise, kernel outputscale, and mean constant constraints
+        self.likelihood_noise_constraint = GreaterThan(lower_bound=1e-4, initial_value=0.5)
+        self.outputscale_constraint = Interval(lower_bound=0, upper_bound=5, initial_value=1)
+        self.mean_constant_constraint = Interval(lower_bound=-1, upper_bound=1, initial_value=0.01)
+
+        # Initialize constraints on the period, periodic lengthscale, and RBF lengthscale based on the dominant period of the time series                            
+        if self.dominant_period <= 0.5:
+            self.period_length_constraint = Interval(
+                lower_bound=max(0 + 1e-3, self.dominant_period - 0.1), upper_bound=2, initial_value=self.dominant_period
+            )
+            self.periodic_lengthscale_constraint = GreaterThan(
+                lower_bound=self.dominant_period/4, initial_value=self.dominant_period
+            )
+            self.rbf_lengthscale_constraint = GreaterThan(
+                lower_bound=self.dominant_period/4, initial_value=self.dominant_period * 4
+            )
+
+        elif self.dominant_period >= 0.5 and self.dominant_period < 1:
+            self.period_length_constraint = Interval(
+                lower_bound=0.4, upper_bound=5, initial_value=self.dominant_period
+            )
+            self.periodic_lengthscale_constraint = GreaterThan(
+                lower_bound=0.1, initial_value=self.dominant_period
+            )
+            self.rbf_lengthscale_constraint = GreaterThan(
+                lower_bound=1, initial_value=self.dominant_period * 3
+            )
+
+        elif self.dominant_period >= 1 and self.dominant_period < 4:
+            self.period_length_constraint = Interval(
+                lower_bound=0.4, upper_bound=5, initial_value=self.dominant_period
+            )
+            self.periodic_lengthscale_constraint = GreaterThan(
+                lower_bound=0.2, initial_value=self.dominant_period / 2
+            )
+            self.rbf_lengthscale_constraint = GreaterThan(
+                lower_bound=1, initial_value=self.dominant_period * 2
+            )
+
+        elif self.dominant_period >= 4 and self.dominant_period < 8:
+            self.period_length_constraint = Interval(
+                lower_bound=self.dominant_period - 1,
+                upper_bound=self.dominant_period + 1,
+                initial_value=self.dominant_period,
+            )
+            self.periodic_lengthscale_constraint = GreaterThan(
+                lower_bound=0.4, initial_value=self.dominant_period / 4
+            )
+            self.rbf_lengthscale_constraint = GreaterThan(
+                lower_bound=self.dominant_period / 3, initial_value=self.dominant_period * 1.5
+            )
+
+        else:
+            self.period_length_constraint = Interval(
+                lower_bound=self.dominant_period - 2,
+                upper_bound=self.dominant_period + 2,
+                initial_value=self.dominant_period,
+            )
+            self.periodic_lengthscale_constraint = GreaterThan(lower_bound=0.4, initial_value=2)
+            self.rbf_lengthscale_constraint = GreaterThan(
+                lower_bound=self.dominant_period / 4, initial_value=self.dominant_period
+            )
+        
         pass
 
     def plot(self):
-        # TODO: Plot the light curve, with color according to the anomalous signal
-        pass
+        """
+        Plot two subplots: the original timeseries in black with identified anomalies plotted in red, and beside it the timeseries colored according to anomalous_signal with a colorbar
+        """
+
+        fig, axs = plt.subplots(1, 2, sharex=True, figsize=(16, 5))
+        
+        # First plot: timeseries with anomalies in red
+        axs[0].plot(self.x, self.y, ".k", markersize=3, alpha=0.5, label="Observed")
+        axs[0].plot(self.x[self.flagged_anomalous], self.y[self.flagged_anomalous], ".r", markersize=5, alpha=0.7, label="Flagged Anomalies")
+        axs[0].set_xlabel("Time")
+        axs[0].set_ylabel("Flux")
+        axs[0].legend()
+
+        # Second plot: timeseries colored according to anomalous_signal with a colorbar
+        scatter = axs[1].scatter(self.x, self.y, c=self.anomalous_signal, cmap='viridis', s=3)
+        axs[1].set_xlabel("Time")
+        axs[1].set_ylabel("Flux")
+
+        # Add colorbar
+        cbar = plt.colorbar(scatter, ax=axs[1])
+        cbar.set_label("Anomaly Signal")
+
+        plt.suptitle(f"Detected {self.num_detected_anomalies} Anomalies in Light Curve")
+
+        plt.tight_layout()
+        plt.show()
+
 
     def build_kernel(self):
         """
@@ -66,76 +157,19 @@ class Search:
         and wraps it in a ScaleKernel to allow for scaling of the overall kernel output.
         """
 
-        # Define kernel initial values based on the dominant period scale
-        if self.dominant_period <= 0.5:
-            period_length_constraint = Interval(
-                lower_bound=max(0 + 1e-3, self.dominant_period - 0.1), upper_bound=2, initial_value=self.dominant_period
-            )
-            periodic_lengthscale_constraint = GreaterThan(
-                lower_bound=self.dominant_period/4, initial_value=self.dominant_period
-            )
-            rbf_lengthscale_constraint = GreaterThan(
-                lower_bound=self.dominant_period/4, initial_value=self.dominant_period * 4
-            )
-
-        elif self.dominant_period >= 0.5 and self.dominant_period < 1:
-            period_length_constraint = Interval(
-                lower_bound=0.4, upper_bound=5, initial_value=self.dominant_period
-            )
-            periodic_lengthscale_constraint = GreaterThan(
-                lower_bound=0.1, initial_value=self.dominant_period
-            )
-            rbf_lengthscale_constraint = GreaterThan(
-                lower_bound=1, initial_value=self.dominant_period * 3
-            )
-
-        elif self.dominant_period >= 1 and self.dominant_period < 4:
-            period_length_constraint = Interval(
-                lower_bound=0.4, upper_bound=5, initial_value=self.dominant_period
-            )
-            periodic_lengthscale_constraint = GreaterThan(
-                lower_bound=0.2, initial_value=self.dominant_period / 2
-            )
-            rbf_lengthscale_constraint = GreaterThan(
-                lower_bound=1, initial_value=self.dominant_period * 2
-            )
-
-        elif self.dominant_period >= 4 and self.dominant_period < 8:
-            period_length_constraint = Interval(
-                lower_bound=self.dominant_period - 1,
-                upper_bound=self.dominant_period + 1,
-                initial_value=self.dominant_period,
-            )
-            periodic_lengthscale_constraint = GreaterThan(
-                lower_bound=0.4, initial_value=self.dominant_period / 4
-            )
-            rbf_lengthscale_constraint = GreaterThan(
-                lower_bound=self.dominant_period / 3, initial_value=self.dominant_period * 1.5
-            )
-
-        else:
-            period_length_constraint = Interval(
-                lower_bound=self.dominant_period - 2,
-                upper_bound=self.dominant_period + 2,
-                initial_value=self.dominant_period,
-            )
-            periodic_lengthscale_constraint = GreaterThan(lower_bound=0.4, initial_value=2)
-            rbf_lengthscale_constraint = GreaterThan(
-                lower_bound=self.dominant_period / 4, initial_value=self.dominant_period
-            )
-
         # Define the GP model
         qp_kernel = QuasiPeriodicKernel(
             periodic_kernel=PeriodicKernel(
-                period_length_constraint=period_length_constraint,
-                lengthscale_constraint=periodic_lengthscale_constraint,
+                period_length_constraint=self.period_length_constraint,
+                lengthscale_constraint=self.periodic_lengthscale_constraint,
             ),
-            rbf_kernel=RBFKernel(lengthscale_constraint=rbf_lengthscale_constraint),
+            rbf_kernel=RBFKernel(lengthscale_constraint=self.rbf_lengthscale_constraint),
         )
 
         # Wrap the kernel in a ScaleKernel to allow for scaling of the overall kernel output
         kernel = ScaleKernel(
-            qp_kernel, outputscale_constraint=Interval(lower_bound=0, upper_bound=5, initial_value=1)
+            qp_kernel, 
+            outputscale_constraint=self.outputscale_constraint
         ).to(self.device)
 
         return kernel
@@ -147,7 +181,7 @@ class Search:
 
         # Define likelihood with a constraint on the noise level to prevent it from becoming too small during optimization
         likelihood = GaussianLikelihood(
-            noise_constraint=GreaterThan(lower_bound=1e-4, initial_value=0.5)
+            noise_constraint=self.likelihood_noise_constraint
         ).to(self.device)
 
         return likelihood
@@ -159,7 +193,7 @@ class Search:
 
         # Define mean function with a constraint on the constant value to prevent it from deviating too far from 0 during optimization 
         # (since data is assumed standardized)
-        mean = ConstantMean(constant_constraint=Interval(lower_bound=-1, upper_bound=1, initial_value=0.01)).to(self.device)
+        mean = ConstantMean(constant_constraint=self.mean_constant_constraint).to(self.device)
 
         return mean
 

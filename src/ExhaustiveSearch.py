@@ -104,14 +104,7 @@ class ExhaustiveSearch(Search):
         num_intervals_to_flag=None,
         silent=True,
         plot=False,
-        training_iterations=1_000,
-        lr=0.01,
-        which_train_metric="mll",  
-        which_opt="adam",
-        early_stopping=True,
-        min_iterations=150,  
-        patience=1,  
-        set_noise_equal_to_var_residuals=True,
+        **kwargs
     ):
         """
         Main function to perform the exhaustive search for anomalies in the time series data.
@@ -125,14 +118,7 @@ class ExhaustiveSearch(Search):
         :param num_intervals_to_flag (int or None): If not None, flag the top num_intervals_to_flag intervals as anomalous based on the test metric, instead of using a threshold (default: None)
         :param silent (bool): If true, suppresses print statements during training (default: True)
         :param plot (bool): If true, plots the GP prediction and p-value for each candidate interval (default: False)
-        :param training_iterations (int): maximum number of training iterations (default: 1000)
-        :param lr (float): learning rate for the optimizer (default: 0.01)
-        :param which_train_metric (str): Metric to use for evaluating improvement during training. Options are 'mll' for marginal log likelihood and 'mse' for mean squared error. Default is 'mll'.
-        :param which_opt (str): Optimizer to use for training. Options are 'adam' and 'sgd'. Default is 'adam'.
-        :param early_stopping (bool): Whether to use early stopping based on the training loss (default: True)
-        :param min_iterations (int or None): Minimum number of iterations to train before considering early stopping (default: None, which sets it to training_iterations // 10)
-        :param patience (int): Number of consecutive iterations with increasing loss to wait before stopping when early_stopping is True (default: 1)
-        :param set_noise_equal_to_var_residuals (bool): Whether to set the likelihood noise variance equal to the variance of the residuals after training (default: False)
+        **kwargs: Additional keyword arguments to pass to the GP training function, such as training_iterations, lr, early_stopping, etc.
         """
         start_time = time.time()
 
@@ -183,15 +169,7 @@ class ExhaustiveSearch(Search):
                 x=self.x_tensor,
                 y=self.y_tensor,
                 device=self.device,
-                training_iterations=training_iterations,
-                lr=lr,
-                which_metric=which_train_metric,
-                which_opt=which_opt,
-                early_stopping=early_stopping,
-                min_iterations=min_iterations,
-                patience=patience,
-                plot=plot,
-                set_noise_equal_to_var_residuals=set_noise_equal_to_var_residuals,
+                **kwargs
             )
 
             # Update kernel and mean with learned parameters
@@ -238,15 +216,7 @@ class ExhaustiveSearch(Search):
                     x=x_train,
                     y=y_train,
                     device=self.device,
-                    training_iterations=training_iterations,
-                    lr=lr,
-                    which_metric=which_train_metric,
-                    which_opt=which_opt,
-                    early_stopping=early_stopping,
-                    min_iterations=min_iterations,
-                    patience=patience,
-                    plot=plot,
-                    set_noise_equal_to_var_residuals=set_noise_equal_to_var_residuals,
+                    **kwargs
                 )
 
                 # Evaluate metric for prediction on test data
@@ -370,14 +340,14 @@ class ExhaustiveSearch(Search):
                 plt.fill_between(
                     self.x, pred_mean - one_stdev, pred_mean + one_stdev, alpha=0.5
                 )
-                plt.plot(self.x, pred_mean, lw=2, alpha=0.9, label="Predicted $\pm$ 1 $\sigma$")
-                plt.plot(self.x, self.y, "k.", markersize=3, label="Observed")
+                plt.plot(self.x, self.y, ".k", markersize=3, alpha=0.5, label="Observed")
                 plt.plot(
-                    self.x[start:end], self.y[start:end], "r.", markersize=4, label="Held Out Interval"
+                    self.x[start:end], self.y[start:end], ".r", markersize=5, alpha=0.7, label="Held Out Interval"
                 )
+                plt.plot(self.x, pred_mean, lw=2, alpha=0.9, label="Predicted $\pm$ 1 $\sigma$")
 
-                plt.xlabel("Time [days]")
-                plt.ylabel("Standardized Flux")
+                plt.xlabel("Time")
+                plt.ylabel("Flux")
                 plt.xlim(min(self.x), max(self.x))
                 plt.legend()
 
