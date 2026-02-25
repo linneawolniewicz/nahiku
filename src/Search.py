@@ -55,6 +55,10 @@ class Search:
         self.rbf_lengthscale_constraint = None
         pass
 
+    def plot(self):
+        # TODO: Plot the light curve, with color according to the anomalous signal
+        pass
+
     def build_kernel(self):
         """
         Build the kernel for the GP model based on the dominant period of the light curve.

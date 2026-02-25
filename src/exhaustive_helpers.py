@@ -1,8 +1,7 @@
 import torch
 from scipy.stats import chi2
-from gpytorch.distributions import MultivariateNormal 
 from gpytorch.lazy import NonLazyTensor
-from scipy.stats import chi2
+from gpytorch.distributions import MultivariateNormal 
 
 @torch.no_grad()
 def precompute_precision(full_x, mean_module, kernel_module, noise_variance,

@@ -85,7 +85,7 @@ class GreedySearch(Search):
         else:
             self.len_deviant = len_deviant
 
-    def plot(self, pred_mean, left_edge, right_edge, residuals):
+    def plot_greedy(self, pred_mean, left_edge, right_edge, residuals):
         """
         Plot the light curve, GP fit, and detected anomalies at each iteration of the greedy search.
 
@@ -95,23 +95,29 @@ class GreedySearch(Search):
         :param residuals (np.ndarray): Array of residuals (absolute value of observed - predicted) for the current iteration
         """
 
-        fig, axs = plt.subplots(1, 2, sharex=True, figsize=(15, 5))
+        fig, axs = plt.subplots(2, 1, sharex=True, figsize=(5, 8))
 
         # Plot the GP mean prediction vs. data
-        axs[0].plot(
-            self.x, pred_mean, lw=2, alpha=0.9, label="GP Mean Prediction"
+        axs[0].axvspan(
+            self.x[left_edge],
+            self.x[right_edge],
+            color="green",
+            alpha=0.4,
+            label="New Flagged Anomaly",
         )
         axs[0].plot(
             self.x_orig, 
             self.y_orig, 
             ".k",
             markersize=3,
+            alpha=0.5,
             label="Observed"
         )
         axs[0].plot(
             self.x_orig[left_edge:right_edge],
             self.y_orig[left_edge:right_edge],
             ".r", 
+            alpha=0.7,
             markersize=5,
         )
         axs[0].plot(
@@ -119,7 +125,11 @@ class GreedySearch(Search):
             self.y_orig[(self.flagged_anomalous == 1)],
             ".r", 
             markersize=5,
+            alpha=0.7,
             label="Flagged as Anomalous",
+        )
+        axs[0].plot(
+            self.x, pred_mean, lw=2, alpha=0.9, label="GP Mean Prediction"
         )
         axs[0].set_ylim(
             np.min(self.y_orig), np.max(self.y_orig)
@@ -130,13 +140,20 @@ class GreedySearch(Search):
         axs[0].set_ylabel("Standardized Flux")
 
         # Plot the residuals
+        axs[1].axvspan(
+            self.x[left_edge],
+            self.x[right_edge],
+            color="green",
+            alpha=0.4,
+            label="New Flagged Anomaly",
+        )
         axs[1].plot(
             self.x,
             self.threshold,
             "--",
             lw=3,
             alpha=0.9,
-            color="C0",
+            color="darkred",
             label=f"Threshold = {self.num_sigma_threshold} "
             + r"$\sqrt{\text{var} + \text{err}^2}$",
         )
@@ -145,36 +162,22 @@ class GreedySearch(Search):
             residuals, 
             ".k",
             markersize=3,
-            label="|observed - predicted|"
+            alpha=0.5,
+            label="|Observed - GP Mean Prediction|"
         )
         axs[1].plot(
             self.x[left_edge:right_edge],
             residuals[left_edge:right_edge],
             ".r", 
             markersize=5,
-            label="Flagged as Anomalous",
-        )
-
-
-        # Plot the max_sum_idx of the new anomaly
-        axs[0].axvspan(
-            self.x[left_edge],
-            self.x[right_edge],
-            color="green",
-            alpha=0.6,
-            label="New flagged anomaly",
-        )
-        axs[1].axvspan(
-            self.x[left_edge],
-            self.x[right_edge],
-            color="green",
-            alpha=0.6,
-            label="New flagged anomaly",
+            alpha=0.7,
+            label="New Flagged as Anomalous",
         )
         axs[1].legend()
         axs[1].set_xlim(np.min(self.x_orig), np.max(self.x_orig))
         axs[1].set_xlabel("Time [days]")
         axs[1].set_ylabel("Standardized Flux")
+        plt.tight_layout()
         plt.show()
 
 
@@ -300,7 +303,7 @@ class GreedySearch(Search):
             metric = float('inf')
 
             # Plot
-            if plot: self.plot(pred_mean, left_edge, right_edge, residuals)
+            if plot: self.plot_greedy(pred_mean, left_edge, right_edge, residuals)
 
             # While the metric is decreasing, expand the anomalous edges
             while diff_metric > 0:
@@ -384,7 +387,7 @@ class GreedySearch(Search):
                     right_edge += self.expansion_param
 
                 # Plot
-                if plot: self.plot(pred_mean_sub, left_edge, right_edge, residuals)
+                if plot: self.plot_greedy(pred_mean_sub, left_edge, right_edge, residuals)
 
             # Remove left_edge:right_edge from x, y, and y_err for the next iteration of the greedy search
             # Handle case where left_edge = 0 or right_edge = len(self.x)

@@ -5,7 +5,7 @@ import lightkurve
 
 from nahiku.src.ExhaustiveSearch import ExhaustiveSearch
 from nahiku.src.GreedySearch import GreedySearch
-from nahiku.src.utils import freq_idx_to_period_days
+from nahiku.src.nahiku_helpers import freq_idx_to_period_days
 
 from scipy.signal import find_peaks, periodogram, windows, peak_prominences
 from scipy.ndimage import gaussian_filter1d
