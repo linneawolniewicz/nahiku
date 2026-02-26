@@ -1,0 +1,6 @@
+# Ignore Python bytecode and Jupyter notebook checkpoints
+__pycache__/
+.ipynb_checkpoints/
+
+# Ignore .venv and other virtual environment directories
+.venv/

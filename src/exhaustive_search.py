@@ -6,7 +6,7 @@ import warnings
 import numpy as np
 import matplotlib.pyplot as plt
 
-from Search import Search
+from search import Search
 from exhaustive_helpers import precompute_precision, interval_posterior_from_precision, compute_interval_pvalue
 
 from gpytorch.mlls import ExactMarginalLogLikelihood
@@ -29,12 +29,12 @@ class ExhaustiveSearch(Search):
         y,                 # Map to Search.y
         dominant_period,   # Map to Search.dominant_period
         device="cpu",      # Map to Search.device
-        min_anomaly_len=1,
-        max_anomaly_len=400,
-        window_slide_step=1,
-        window_size_step=1,
+        min_anomaly_len=50,
+        max_anomaly_len=100,
+        window_slide_step=100,
+        window_size_step=50,
         assume_independent=True,
-        which_test_metric="mll",
+        which_test_metric="pval",
     ):
         """
         Initialize the ExhaustiveSearch class and the base Search class with the provided parameters.
@@ -100,7 +100,7 @@ class ExhaustiveSearch(Search):
         neg_anomaly_only=False,
         pos_anomaly_only=False, 
         dynamic_programming=False, 
-        threshold=1e-5,
+        threshold=1e-3,
         num_intervals_to_flag=None,
         silent=True,
         plot=False,
@@ -335,16 +335,16 @@ class ExhaustiveSearch(Search):
                     one_stdev = y_pred.stddev.cpu().numpy()
 
                 # Plot the results
-                plt.figure(figsize=(7, 5))
+                plt.figure(figsize=(8, 5))
                 plt.title(f"p-value: {interval_metric:.0e}")
                 plt.fill_between(
                     self.x, pred_mean - one_stdev, pred_mean + one_stdev, alpha=0.5
                 )
-                plt.plot(self.x, self.y, ".k", markersize=3, alpha=0.5, label="Observed")
-                plt.plot(
-                    self.x[start:end], self.y[start:end], ".r", markersize=5, alpha=0.7, label="Held Out Interval"
+                plt.scatter(self.x, self.y, c='black', s=3, alpha=0.5, label="Observed")
+                plt.scatter(
+                    self.x[start:end], self.y[start:end], c='red', marker='x', s=10, alpha=0.8, label="Held Out Interval"
                 )
-                plt.plot(self.x, pred_mean, lw=2, alpha=0.9, label="Predicted $\pm$ 1 $\sigma$")
+                plt.plot(self.x, pred_mean, lw=1, alpha=0.7, label="Predicted $\pm$ 1 $\sigma$")
 
                 plt.xlabel("Time")
                 plt.ylabel("Flux")
@@ -381,6 +381,10 @@ class ExhaustiveSearch(Search):
         if threshold is not None:
             # Flag intervals as anomalous if their metric is below the threshold
             for i, metric in enumerate(self.metrics):
+                # If metric is a tensor, convert to scalar
+                if isinstance(metric, torch.Tensor):
+                    metric = metric.detach().cpu().numpy().item()
+
                 if metric < threshold:
                     start, end = self.intervals[i]
                     self.flagged_anomalous[start:end] = True
@@ -398,4 +402,3 @@ class ExhaustiveSearch(Search):
                 self.num_detected_anomalies += 1
 
         self.runtime = time.time() - start_time
-        print(f"Time taken for anomaly detection: {self.runtime} seconds")

@@ -5,7 +5,7 @@ import warnings
 import numpy as np
 import matplotlib.pyplot as plt
 
-from Search import Search
+from search import Search
 
 from gpytorch.mlls import ExactMarginalLogLikelihood
 from scipy.ndimage import minimum_filter1d
@@ -85,17 +85,19 @@ class GreedySearch(Search):
         else:
             self.len_deviant = len_deviant
 
-    def plot_greedy(self, pred_mean, left_edge, right_edge, residuals):
+    def plot_greedy(self, x, pred_mean, left_edge, right_edge, residuals):
         """
         Plot the light curve, GP fit, and detected anomalies at each iteration of the greedy search.
 
+        :param x (torch.Tensor): x values used for GP prediction at the current iteration. Only needed to plot against pred_mean
+                Every other plotting call will use self.x or self.x_orig
         :param pred_mean (np.ndarray): Array of the GP mean predictions corresponding to self.x at the current iteration
         :param left_edge (int): Left edge index of the currently flagged anomalous region
         :param right_edge (int): Right edge index of the currently flagged anomalous region
         :param residuals (np.ndarray): Array of residuals (absolute value of observed - predicted) for the current iteration
         """
 
-        fig, axs = plt.subplots(2, 1, sharex=True, figsize=(5, 8))
+        fig, axs = plt.subplots(2, 1, sharex=True, figsize=(8, 8))
 
         # Plot the GP mean prediction vs. data
         axs[0].axvspan(
@@ -105,31 +107,33 @@ class GreedySearch(Search):
             alpha=0.4,
             label="New Flagged Anomaly",
         )
-        axs[0].plot(
+        axs[0].scatter(
             self.x_orig, 
             self.y_orig, 
-            ".k",
-            markersize=3,
+            c='black', 
+            s=3, 
             alpha=0.5,
             label="Observed"
         )
-        axs[0].plot(
+        axs[0].scatter(
             self.x_orig[left_edge:right_edge],
             self.y_orig[left_edge:right_edge],
-            ".r", 
-            alpha=0.7,
-            markersize=5,
+            c='red', 
+            s=10, 
+            marker='x', 
+            alpha=0.8, 
         )
-        axs[0].plot(
+        axs[0].scatter(
             self.x_orig[(self.flagged_anomalous == 1)],
             self.y_orig[(self.flagged_anomalous == 1)],
-            ".r", 
-            markersize=5,
-            alpha=0.7,
+            c='red', 
+            s=10, 
+            marker='x', 
+            alpha=0.8, 
             label="Flagged as Anomalous",
         )
         axs[0].plot(
-            self.x, pred_mean, lw=2, alpha=0.9, label="GP Mean Prediction"
+            x, pred_mean, lw=1, alpha=0.7, label="GP Mean Prediction"
         )
         axs[0].set_ylim(
             np.min(self.y_orig), np.max(self.y_orig)
@@ -152,25 +156,26 @@ class GreedySearch(Search):
             self.threshold,
             "--",
             lw=3,
-            alpha=0.9,
-            color="darkred",
+            alpha=0.8,
+            color="gold",
             label=f"Threshold = {self.num_sigma_threshold} "
             + r"$\sqrt{\text{var} + \text{err}^2}$",
         )
-        axs[1].plot(
-            self.x, 
+        axs[1].scatter(
+            self.x,
             residuals, 
-            ".k",
-            markersize=3,
+            c='black', 
+            s=3, 
             alpha=0.5,
             label="|Observed - GP Mean Prediction|"
         )
-        axs[1].plot(
+        axs[1].scatter(
             self.x[left_edge:right_edge],
             residuals[left_edge:right_edge],
-            ".r", 
-            markersize=5,
-            alpha=0.7,
+            c='red', 
+            s=10, 
+            marker='x', 
+            alpha=0.8, 
             label="New Flagged as Anomalous",
         )
         axs[1].legend()
@@ -183,7 +188,7 @@ class GreedySearch(Search):
 
     def search_for_anomaly(
         self,
-        refit=True,  
+        refit=False,  
         neg_anomaly_only=False,
         pos_anomaly_only=False, 
         plot=False,
@@ -273,7 +278,7 @@ class GreedySearch(Search):
             metric = float('inf')
 
             # Plot
-            if plot: self.plot_greedy(pred_mean, left_edge, right_edge, residuals)
+            if plot: self.plot_greedy(self.x, pred_mean, left_edge, right_edge, residuals)
 
             # While the metric is decreasing, expand the anomalous edges
             while diff_metric > 0:
@@ -349,7 +354,7 @@ class GreedySearch(Search):
                     right_edge += self.expansion_param
 
                 # Plot
-                if plot: self.plot_greedy(pred_mean_sub, left_edge, right_edge, residuals)
+                if plot: self.plot_greedy(x_sub, pred_mean_sub, left_edge, right_edge, residuals)
 
             # Remove left_edge:right_edge from x, y, and y_err for the next iteration of the greedy search
             # Handle case where left_edge = 0 or right_edge = len(self.x)
@@ -410,4 +415,3 @@ class GreedySearch(Search):
             exist_points_above_threshold = np.any(min_values > self.threshold)
 
         self.runtime = time.time() - start_time
-        print(f"Time taken for anomaly detection: {self.runtime} seconds")

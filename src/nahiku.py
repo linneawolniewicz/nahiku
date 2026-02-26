@@ -6,11 +6,11 @@ import matplotlib.pyplot as plt
 import lightkurve
 import warnings
 
-from ExhaustiveSearch import ExhaustiveSearch
-from GreedySearch import GreedySearch
+from exhaustive_search import ExhaustiveSearch
+from greedy_search import GreedySearch
 from gp_helpers import QuasiPeriodicKernel
-
 from balmung import Balmung
+
 from scipy.signal import find_peaks, periodogram, windows, peak_prominences
 from scipy.ndimage import gaussian_filter1d
 from gpytorch.means import ConstantMean
@@ -27,7 +27,7 @@ class Nahiku:
             self,
             time,
             flux,
-            anomalies={"true": [], "injected": [], "identified": []},
+            anomalies=None,
             prominence=50,
             plot_dominant_period=False
         ):
@@ -44,7 +44,13 @@ class Nahiku:
 
         self.time = time
         self.flux = flux
-        self.anomalies = anomalies # Will carry lists of true, injected, and identified anomalies, with keys "true", "injected", and "identified"
+
+        # self.anomalies carry lists of true, injected, and identified anomalies, with keys "true", "injected", and "identified"
+        if anomalies is None:
+            self.anomalies = {"true": [], "injected": [], "identified": []}
+        else:
+            # Ensures that the anomalies are not carried around by multiple objects
+            self.anomalies = anomalies.copy()
         
         self.dominant_period = self.get_dominant_period(prominence=prominence, plot=plot_dominant_period)
 
@@ -80,10 +86,11 @@ class Nahiku:
 
     @staticmethod
     def from_synthetic_parameterized_noise(
-        rednoise_amp=1.0,
-        whitenoise_amp=1.0,
+        num_days=100,
         num_steps=1000,
         seed=48,
+        rednoise_amp=1.0,
+        whitenoise_amp=1.0,
         period=None,
         phase=None,
         amp=None,
@@ -95,10 +102,11 @@ class Nahiku:
         """
         Generate a synthetic light curve with a sinusoidal signal, white noise, red noise, a step function anomaly, and a linear trend.
 
-        :param rednoise_amp (float): amplitude of red noise (default: 1.0)
-        :param whitenoise_amp (float): amplitude of white noise (default: 1.0)
+        :param num_days (float): total duration of the light curve in days (default: 100)
         :param num_steps (int): number of time steps in the light curve (default: 1000)
         :param seed (int): random seed for reproducibility (default: 48)
+        :param rednoise_amp (float): amplitude of red noise (default: 1.0)
+        :param whitenoise_amp (float): amplitude of white noise (default: 1.0)
         :param period (float): period of the sinusoidal signal (default: randomly chosen between 175 and 225)
         :param phase (float): phase of the sinusoidal signal (default: randomly chosen between 0 and 2*pi)
         :param amp (float): amplitude of the sinusoidal signal (default: randomly chosen between 0 and 0.9)
@@ -112,7 +120,7 @@ class Nahiku:
             warnings.warn("Number of steps must be non-negative. Defaulting to its absolute value.")
             num_steps = abs(num_steps)
         
-        x = np.arange(num_steps)
+        x = np.linspace(0, num_days, num_steps)
         rng = np.random.default_rng(seed=seed)
 
         # Synthetic lightcurve
@@ -168,9 +176,9 @@ class Nahiku:
 
     @staticmethod
     def from_synthetic_parameterized_gp(
+        num_days=100,
+        num_steps=1000,
         seed=48,
-        num_days=80,
-        num_steps=3000,
         add_high_residuals=False,
         device="cpu",
         mean_constant=None,
@@ -188,9 +196,9 @@ class Nahiku:
         Sample a function from a Gaussian Process with a scaled quasi-periodic kernel, constant mean, and Gaussian likelihood, 
         with options to specify various parameters for the kernel, mean function, likelihood noise, and number high residuals to add in.
 
+        :param num_days (float): total duration of the light curve in days (default: 100)
+        :param num_steps (int): number of time steps in the light curve (default: 1000)
         :param seed (int): random seed for reproducibility (default: 48)
-        :param num_days (float): total duration of the light curve in days (default: 80)
-        :param num_steps (int): number of time steps in the light curve (default: 3000)
         :param add_high_residuals (bool): whether to add high residuals to the sampled function to create more challenging anomalies (default: False)
         :param device (str): device to use for GP sampling, either "cpu" or "cuda" (default: "cpu")
         :param mean_constant (float or None): constant value for the mean function. 
@@ -265,7 +273,7 @@ class Nahiku:
             mvn = MultivariateNormal(mean_x, covar_x)
 
         # Sample from the MultivariateNormal
-        sample = mvn.sample(sample_shape=torch.Size(1))
+        sample = mvn.sample()
 
         # Add uncorrelated gaussian noise with noise_std
         noisy_sample = sample.cpu().numpy()
@@ -321,10 +329,14 @@ class Nahiku:
 
         # Pass remaining kwargs to search_for_anomaly, which will handle defaults for those
         search.search_for_anomaly(**kwargs)
+        print(f"The greedy search took {search.runtime:.2f} seconds to run, and found {search.num_detected_anomalies} anomalous intervals.")
 
         # Add flagged anomalous indices to self.anomalies['identified']
-        flagged_indices = np.nonzero(search.flagged_anomalous)
-        self.anomalies['identified'].extend(flagged_indices[0].tolist())
+        flagged_indices = np.nonzero(search.flagged_anomalous)[0].tolist()
+
+        if flagged_indices not in self.anomalies['identified']:
+            self.anomalies['identified'].extend(flagged_indices)
+            self.anomalies['identified'].sort()  # Sort the list of injected anomaly locations for easier visualization and analysis later
 
         return search
 
@@ -351,54 +363,73 @@ class Nahiku:
 
         # Pass remaining kwargs to search_for_anomaly, which will handle defaults for those
         search.search_for_anomaly(**kwargs)
+        print(f"The exhaustive search took {search.runtime:.2f} seconds to run, and found {search.num_detected_anomalies} anomalous intervals.")
 
         # Add flagged anomalous indices to self.anomalies['identified']
-        flagged_indices = np.nonzero(search.flagged_anomalous)
-        self.anomalies['identified'].extend(flagged_indices[0].tolist())
+        flagged_indices = np.nonzero(search.flagged_anomalous)[0].tolist()
+
+        if flagged_indices not in self.anomalies['identified']:
+            self.anomalies['identified'].extend(flagged_indices)
+            self.anomalies['identified'].sort()  # Sort the list of injected anomaly locations for easier visualization and analysis later
 
         return search
 
-    def plot(self):
+    def plot(self, show_identified_points=True):
         """
-        Plot the light curve using matplotlib, with time on the x-axis and flux on the y-axis.
-        """
+        Plot the light curve with shaded regions for injected/true anomalies 
+        and optional red x's for identified anomalies.
 
-        plt.figure(figsize=(8, 5))
+        :param show_identified_points (bool): whether to plot the identified anomalous points as red x's (default: True)
+        """
+        plt.figure(figsize=(10, 5))
+        
+        # Base Light Curve
         plt.scatter(self.time, self.flux, c='k', s=3, alpha=0.5, label="Light Curve")
 
-        # If there are any anomaly indices in self.anomalies, plot them with different colors
-        # Plot identified anaomlies as red, and highlight injected anomaly areas in yellow and true anomaly areas in blue
-        if self.anomalies['identified']:
-            anomaly_locs = self.anomalies['identified']
-            plt.scatter(self.time[anomaly_locs], self.flux[anomaly_locs], c='red', s=5, alpha=0.7, label="Identified Anomaly")
+        # Shaded Regions (Injected & True)
+        regions = [
+            ('injected', 'gold', 'Injected Anomaly', 0.6),
+            ('true', 'blue', 'True Anomaly', 0.6)
+        ]
 
-        if self.anomalies['injected']:
-            # For each consecutive sequence of injected anomalies, highlight the area in yellow with plt.axvspan
-            injected_locs = self.anomalies['injected']
-            for i in range(len(injected_locs) - 1):
-                if injected_locs[i + 1] != injected_locs[i] + 1:
-                    plt.axvspan(self.time[injected_locs[i]], self.time[injected_locs[i + 1]], color='yellow', alpha=0.3)
+        for key, color, label, alpha in regions:
+            events = self.get_events(self.anomalies.get(key, []))
+            for i, (start_idx, end_idx) in enumerate(events):
+                plt.axvspan(
+                    self.time[start_idx], 
+                    self.time[end_idx], 
+                    color=color, 
+                    alpha=alpha, 
+                    # Only add the label to the first event for the legend
+                    label=label if i == 0 else ""
+                )
 
-            # Add label for the legend (plot outside bounds of the light curve so it doesn't show up on the plot)
-            plt.axvspan(self.time[-1] + 100, self.time[-1] + 200, color='yellow', alpha=0.3, label="Injected Anomaly")
+        # Identified Points
+        if show_identified_points and self.anomalies['identified']:
+            idx = self.anomalies['identified']
+            plt.scatter(
+                self.time[idx], 
+                self.flux[idx], 
+                c='red', 
+                s=10, 
+                marker='x', 
+                alpha=0.8, 
+                label="Identified Anomaly"
+            )
 
-        if self.anomalies['true']:
-            # For each consecutive sequence of true anomalies, highlight the area in blue with plt.axvspan
-            true_locs = self.anomalies['true']
-            for i in range(len(true_locs) - 1):
-                if true_locs[i + 1] != true_locs[i] + 1:
-                    plt.axvspan(self.time[true_locs[i]], self.time[true_locs[i + 1]], color='blue', alpha=0.3)
-
-            # Add label for the legend (plot outside bounds of the light curve so it doesn't show up on the plot)
-            plt.axvspan(self.time[-1] + 200, self.time[-1] + 300, color='blue', alpha=0.3, label="True Anomaly")
-            
+        # Formatting
         plt.xlim(self.time[0], self.time[-1])
-        plt.ylim(min(self.flux) - 0.1 * np.ptp(self.flux), max(self.flux) + 0.1 * np.ptp(self.flux))
+        # Auto-scale Y with some padding
+        y_padding = np.ptp(self.flux) * 0.1
+        plt.ylim(np.min(self.flux) - y_padding, np.max(self.flux) + y_padding)
 
-        plt.xlabel("Time")
-        plt.ylabel("Flux")
-        plt.title("Light Curve")
-        plt.legend()
+        plt.xlabel("Time [units of time array]")
+        plt.ylabel("Normalized Flux")
+        plt.title(f"Light Curve | Dominant Period: {self.dominant_period:.2f} [units of time array]")
+        
+        # Place legend outside or adjust to avoid covering data
+        plt.legend(loc='upper right', frameon=True, fontsize='small')
+        plt.tight_layout()
         plt.show()
 
     def standardize(self):
@@ -409,7 +440,9 @@ class Nahiku:
         """
         self.flux = (self.flux - np.mean(self.flux)) / np.std(self.flux)
 
-    def prewhiten(self, plot=True, **kwargs):
+        return
+
+    def prewhiten(self, plot=False, **kwargs):
         """
         Prewhiten a light curve using the balmung.prewhiten function, with options to specify various parameters for the removal of frequencies.
         Code for balmung.prewhiten can be found here: https://github.com/danhey/balmung/blob/master/balmung/balmung.py
@@ -425,15 +458,19 @@ class Nahiku:
 
         if plot:
             print("Light curve before prewhitening:")
-            bm.plot_lc()
+            self.plot()
         
         bm.prewhiten(**kwargs)
+
+        # Update inplace
+        self.flux = bm.residual
+        self.dominant_period = self.get_dominant_period(prominence=init_args.get('prominence', 50), plot=init_args.get('plot_dominant_period', False))
         
         if plot:
             print("Light curve after prewhitening:")
-            bm.plot_residual()
+            self.plot()
 
-        return Nahiku(bm.time, bm.residual, **init_args)
+        return
 
     @staticmethod
     def freq_idx_to_period_days(freqs_idx, times):
@@ -460,7 +497,7 @@ class Nahiku:
 
         # Check if data is standardized
         if np.std(self.flux) != 1:
-            warnings.warn("Data is not standardized, so it will be standardize it for periodogram calculation.")
+            warnings.warn("Data is not standardized, and will be standardized for estimating the dominant period.")
             self.standardize()
 
         # Get peaks in power spectrum
@@ -526,9 +563,9 @@ class Nahiku:
                 )
             axs[0].legend()
             axs[0].set_xscale("log")
-            axs[0].set_xlabel("Period [days]")
+            axs[0].set_xlabel("Period [units of time array]")
             axs[0].set_ylabel("Power")
-            axs[0].set_title(f"Periodogram with max peak at {dominant_period:.2f} days")
+            axs[0].set_title(f"Periodogram with max peak at {dominant_period:.2f} [units of time array]")
 
             # Plot lightcurve with dominant period sinusoid
             axs[1].scatter(self.time, self.flux, s=2, label="Lightcurve")
@@ -536,9 +573,9 @@ class Nahiku:
                 self.time,
                 np.sin(2 * np.pi * self.time / dominant_period) + 4,
                 c="darkorange",
-                label=f"Dominant period: {dominant_period:.2f} days",
+                label=f"Dominant period: {dominant_period:.2f} [units of time array]",
             )
-            axs[1].set_xlabel("Time [days]")
+            axs[1].set_xlabel("Time [units of time array]")
             axs[1].set_ylabel("Flux")
             axs[1].legend()
 
@@ -550,28 +587,28 @@ class Nahiku:
     def inject_anomaly(
         self, 
         num_anomalies,
+        absolute_width=None,
+        absolute_depth=None,  
+        idxs=None,
         seed=48,
         shapes=["gaussian", "saw", "exocomet"],
         period_scale=None,
         snr=None,
-        absolute_width=None,
-        absolute_depth=None,  
-        locs=None,
         alpha=1, 
     ):
         """
         Inject an anomaly into the light curve, with options to specify the number of anomalies, their shapes, widths, depths, and locations.
 
         :param num_anomalies (int): number of anomalies to inject
+        :param absolute_width (float or None): absolute width of the anomaly. If specified, period_scale is ignored (default: None)
+        :param absolute_depth (float or None): absolute depth of the anomaly. If specified, snr is ignored (default: None)
+        :param idxs (list of float or None): list of indices to inject anomalies at. If None, indices are randomly chosen (default: None)
         :param seed (int): random seed for reproducibility (default: 48)
         :param shapes (list of str): list of shapes to choose from for the anomalies. 
                 Options are "gaussian" for gaussian-shaped anomalies, "saw" for sawtooth-shaped anomalies, and "exocomet" for exocomet-shaped anomalies. 
                 Default is ["gaussian", "saw", "exocomet"].
         :param period_scale (float or None): ratio of the dominant period to use as the width of the anomaly. If None, randomly chosen between 0.1 and 5 (default: None)
         :param snr (float or None): signal to noise ratio of the anomaly. If None, randomly chosen between 0.5 and 10 (default: None)
-        :param absolute_width (float or None): absolute width of the anomaly. If specified, period_scale is ignored (default: None)
-        :param absolute_depth (float or None): absolute depth of the anomaly. If specified, snr is ignored (default: None)
-        :param locs (list of float or None): list of locations to inject anomalies at. If None, locations are randomly chosen (default: None)
         :param alpha (float): shape parameter for the exocomet profile, which controls the asymmetry of the anomaly. 
                 Higher values of alpha result in a more asymmetric profile with a steeper ingress and a shallower egress (default: 1)
         """
@@ -581,7 +618,7 @@ class Nahiku:
         num_steps = len(self.time)
         time_steps = np.arange(num_steps)
         anomaly = np.zeros(num_steps)
-        anomaly_locs = []
+        anomaly_idxs = []
 
         # If absolute_depth is given, use it as the depth of the anomaly
         if absolute_depth is not None:
@@ -619,7 +656,7 @@ class Nahiku:
             # Create anomaly period_scale if not given
             if period_scale is None:
                 period_scale = rng.uniform(0.1, 5)  # period scaling of anomaly
-                print(f"Anomaly absolutel width and period_scale were not specified. Using period_scale = {period_scale}")
+                print(f"Anomaly absolute width and period_scale were not specified. Using period_scale = {period_scale}")
 
             if period_scale < 0: 
                 warnings.warn("Period scale must be positive. Defaulting to its absolute value.")
@@ -632,52 +669,52 @@ class Nahiku:
                 anomaly_period / (2 * np.sqrt(2 * np.log(2))), 1
             )  
 
-        # Perform some checks of locs list if given
-        if locs is not None:
-            # Check locs is a list of floats
-            if not isinstance(locs, list) or not all(isinstance(loc, (int, float)) for loc in locs):
-                warnings.warn("Locs must be a list of floats. Defaulting to random locations.")
-                locs = None
+        # Perform some checks of idxs list if given
+        if idxs is not None:
+            # Check idxs is a list of floats
+            if not isinstance(idxs, list) or not all(isinstance(idx, (int, float)) for idx in idxs):
+                warnings.warn("Idxs must be a list of floats. Defaulting to random indices.")
+                idxs = None
             
-            # Check that locs are within the range of the time array
-            if not all((loc >= self.time[0] and loc <= self.time[-1]) for loc in locs):
-                warnings.warn("All locs must be within the range of the time array. Defaulting to random locations.")
-                locs = None
+            # Check that idxs are within the range of the time array
+            if not all((idx >= 0 and idx < len(self.time)) for idx in idxs):
+                warnings.warn("All idxs must be within the range of the time array. Defaulting to random indices.")
+                idxs = None
 
-        if locs is not None:
-            # Check number of locs matches num_anomalies
-            if len(locs) != num_anomalies:
-                warnings.warn("Length of locs does not match num_anomalies. Defaulting to only using the first num_anomalies values in locs.")
-                locs = locs[:num_anomalies]
+        if idxs is not None:
+            # Check number of idxs matches num_anomalies
+            if len(idxs) != num_anomalies:
+                warnings.warn("Length of idxs does not match num_anomalies. Defaulting to only using the first num_anomalies values in idxs.")
+                idxs = idxs[:num_anomalies]
 
         # Check that shapes is a list of strings and that all shapes are valid
         if not isinstance(shapes, list) or not all(isinstance(shape, str) for shape in shapes) or not all(shape in ["gaussian", "saw", "exocomet"] for shape in shapes):
             warnings.warn("Shapes must be a list of strings containing only 'gaussian', 'saw', and/or 'exocomet'. Defaulting to ['gaussian', 'saw', 'exocomet']")
             shapes = ["gaussian", "saw", "exocomet"]
 
-        # Inject anomalies of anomaly_width and anomaly_amp at random locations (as many as in locs)
+        # Inject anomalies of anomaly_width and anomaly_amp at random locations (as many as in idxs)
         for i in range(num_anomalies):
 
-            # If locs is given, use the specified location. Otherwise, choose a random location for the anomaly
-            if locs is not None:
-                anomaly_loc = int(locs[i])
+            # If idxs is given, use the specified index. Otherwise, choose a random index for the anomaly
+            if idxs is not None:
+                anomaly_idx = int(idxs[i])
             else:
-                anomaly_loc = int(num_steps * rng.random())
+                anomaly_idx = int(num_steps * rng.random())
 
-            anomaly_locs.append(anomaly_loc)
+            anomaly_idxs.append(anomaly_idx)
             shape = rng.choice(shapes)
 
             if shape == "gaussian":
                 # Gaussian-shape anomaly at x0
                 anomaly += anomaly_amp * np.exp(
-                    -0.5 * ((time_steps - anomaly_loc) / anomaly_width) ** 2
+                    -0.5 * ((time_steps - anomaly_idx) / anomaly_width) ** 2
                 )
                 anomaly_fwhm = 2.355 * anomaly_width  # True for gaussian-shaped anomalies
 
             elif shape == "saw":
                 # Create anomaly that has a quick dip to anomaly_amp, then a slow rise back to 0 based on anomaly_width
                 anomaly += anomaly_amp * (
-                    1 - np.exp(-np.abs(time_steps - anomaly_loc) / anomaly_width)
+                    1 - np.exp(-np.abs(time_steps - anomaly_idx) / anomaly_width)
                 )
                 anomaly_fwhm = 2 * anomaly_width  # Approximation for saw-shaped anomalies
 
@@ -687,7 +724,7 @@ class Nahiku:
                 # T0 = injection time (in days) in the light curve
                 # t = T - T0 if T >= T0 else 0
                 # A is an amplitude parameter, tau a width parameter, and alpha the shape parameter
-                t = self.time - self.time[anomaly_loc]
+                t = self.time - self.time[anomaly_idx]
                 t = np.where(t >= 0, t, 0)  
 
                 anomaly += anomaly_amp * np.exp((-1 * t) / anomaly_width) * (t / anomaly_width) ** alpha
@@ -695,45 +732,90 @@ class Nahiku:
                 anomaly_fwhm = 2.45 * anomaly_width  # The FWHM is 2.45 tau for exocomet-shaped anomalies
                 anomaly_amp = 0.37 * anomaly_amp  # Because the minimum of this function is at A/e, or 0.37A
 
-        # Add anomaly_locs to self.anomalies['injected'] and add anomaly to flux
-        self.anomalies['injected'].extend(anomaly_locs)
+            print(f"Injected {shape}-shaped anomaly with amplitude {anomaly_amp:.2f}, width {anomaly_width:.2f}, and FWHM {anomaly_fwhm:.2f} at index {anomaly_idx} (time {self.time[anomaly_idx]:.2f} [units of time array])")  
+
+            # Add anomaly_idxs to self.anomalies['injected'] and add anomaly to flux
+            if anomaly_idx not in self.anomalies['injected']:
+                self.anomalies['injected'].append(anomaly_idx)
+                self.anomalies['injected'].sort()  # Sort the list of injected anomaly locations for easier visualization and analysis later
+
         self.flux += anomaly
 
-        return anomaly_locs, anomaly, anomaly_amp, anomaly_fwhm
+        return anomaly_idxs, anomaly, anomaly_amp, anomaly_fwhm
 
-    def check_identified_anomalies(self):
+    @staticmethod
+    def get_events(indices):
+        """
+        Helper to turn a list of indices into a list of (start, end) tuples.
+        
+        :param indices (list of int): list of indices to group into events
+        """
+        if not indices: return []
+        indices = sorted(list(set(indices)))
+        events = []
+        start = indices[0]
+
+        # Group consecutive indices into events. 
+        # If the next index is more than 1 away from the current index, we consider it a new event
+        for i in range(1, len(indices)):
+            if indices[i] > indices[i-1] + 1:
+                events.append((start, indices[i-1]))
+                start = indices[i]
+
+        events.append((start, indices[-1]))
+        return events
+
+    def check_identified_anomalies(self, buffer=5):
         """
         Check the identified anomalies against the true and injected anomalies, and print out the results.
+
+        :param buffer (int): number of indices on either side of the true and injected anomaly indices to consider as a match for an identified anomaly (default: 5)
         """
+        # Group indices into events
+        true_events = self.get_events(self.anomalies['true'])
+        injected_events = self.get_events(self.anomalies['injected'])
+        identified_events = self.get_events(self.anomalies['identified'])
 
-        identified_set = set(self.anomalies['identified'])
-        true_set = set(self.anomalies['true'])
-        injected_set = set(self.anomalies['injected'])
+        # Combine true and injected for total ground truth
+        all_ground_truth = true_events + injected_events
+        
+        # Check for matches
+        detected_count = 0
+        for gt_start, gt_end in all_ground_truth:
+            # Check if any identified event overlaps with this ground truth event (including buffer)
+            for id_start, id_end in identified_events:
+                # Overlap logic: (StartA <= EndB + buffer) and (EndA >= StartB - buffer)
+                if (id_start <= gt_end + buffer) and (id_end >= gt_start - buffer):
+                    detected_count += 1
+                    break # Found a match for this GT event, move to next
 
-        detected_true = identified_set.intersection(true_set)
-        detected_injected = identified_set.intersection(injected_set)
-        detected_true_injected = identified_set.intersection(true_set.intersection(injected_set))
-        false_positives = identified_set - true_set - injected_set
+        # False Positives: Identified events that hit no ground truth
+        false_positives_count = 0
+        for id_start, id_end in identified_events:
+            hit = False
+            for gt_start, gt_end in all_ground_truth:
+                if (id_start <= gt_end + buffer) and (id_end >= gt_start - buffer):
+                    hit = True
+                    break
 
-        true_anomaly_tpr = len(detected_true) / len(true_set) if len(true_set) > 0 else 0
-        injected_anomaly_tpr = len(detected_injected) / len(injected_set) if len(injected_set) > 0 else 0
-        total_tpr = len(detected_true_injected) / len(true_set.union(injected_set)) if len(true_set.union(injected_set)) > 0 else 0
-        false_positive_rate = len(false_positives) / (len(self.time) - len(true_set) - len(injected_set)) if (len(self.time) - len(true_set) - len(injected_set)) > 0 else 0
+            if not hit:
+                false_positives_count += 1
 
-        print(f"True anomaly indices detected: {len(detected_true)} out of {len(true_set)} (TPR: {true_anomaly_tpr:.2f})")
-        print(f"Injected anomaly indices detected: {len(detected_injected)} out of {len(injected_set)} (TPR: {injected_anomaly_tpr:.2f})")
-        print(f"Total anomaly indices detected: {len(detected_true_injected)} out of {len(true_set.union(injected_set))} (TPR: {total_tpr:.2f})")
-        print(f"False positive rate: {false_positive_rate:.2f}")
+        # Calculate metrics
+        total_gt_events = len(all_ground_truth)
+        tpr = detected_count / total_gt_events if total_gt_events > 0 else 0
+        precision = detected_count / len(identified_events) if len(identified_events) > 0 else 0
+
+        print(f"Events Detected: {detected_count} / {total_gt_events}")
+        print(f"Event-wise TPR: {tpr:.2f}")
+        print(f"False Positive Events: {false_positives_count}")
+        print(f"Event-wise Precision: {precision:.2f}")
 
         return {
-            "detected_true": detected_true,
-            "detected_injected": detected_injected,
-            "detected_true_injected": detected_true_injected,
-            "false_positives": false_positives,
-            "true_anomaly_tpr": true_anomaly_tpr,
-            "injected_anomaly_tpr": injected_anomaly_tpr,
-            "total_tpr": total_tpr,
-            "false_positive_rate": false_positive_rate
+            "tpr": tpr,
+            "precision": precision,
+            "detected_count": detected_count,
+            "false_positives": false_positives_count
         }
 
         
