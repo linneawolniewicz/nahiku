@@ -465,6 +465,7 @@ class Nahiku:
         # Update inplace
         self.flux = bm.residual
         self.dominant_period = self.get_dominant_period(prominence=init_args.get('prominence', 50), plot=init_args.get('plot_dominant_period', False))
+        self.standardize()
         
         if plot:
             print("Light curve after prewhitening:")

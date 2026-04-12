@@ -22,7 +22,7 @@ class Balmung:
         self.residual = np.copy(self.flux)
         self.removed = []
 
-    def prewhiten(self, fmin=None, fmax=None, minimum_snr=5, maxiter=100, diagnose=True):
+    def prewhiten(self, fmin=None, fmax=None, minimum_snr=0, maxiter=200, diagnose=True):
         # Calculate initial amplitude spectrum
         freq, amp = self.amplitude_spectrum(self.time, self.residual, fmin=fmin, fmax=fmax)
 
