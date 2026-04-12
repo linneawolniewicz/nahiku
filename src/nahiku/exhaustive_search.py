@@ -6,29 +6,34 @@ import warnings
 import numpy as np
 import matplotlib.pyplot as plt
 
-from search import Search
-from exhaustive_helpers import precompute_precision, interval_posterior_from_precision, compute_interval_pvalue
+from .search import Search
+from .exhaustive_helpers import (
+    precompute_precision,
+    interval_posterior_from_precision,
+    compute_interval_pvalue,
+)
 
 from gpytorch.mlls import ExactMarginalLogLikelihood
 
 
 class ExhaustiveSearch(Search):
     """
-        This class implements an exhaustive search algorithm to identify anomalous intervals in a time series using Gaussian Processes.
+    This class implements an exhaustive search algorithm to identify anomalous intervals in a time series using Gaussian Processes.
 
-        Method:
-            1. List every possible contiguous interval in the time series that could contain an anomaly, based on priors (e.g., minimum and maximum anoamly duration).
-            2. Fit the entire time series with a GP and store the optimized parameters (and, optionally, the full precision matrix if using dynamic programming).
-            3. For each candidate interval, compute the posterior likelihood of the test interval given a MultivariateNormal distribution fit to the rest of the data.
-               Optionally, use dynamic programming to compute the posterior likelihoods more efficiently by leveraging the precision matrix of the full GP fit.
-            4. Flag intervals as anomalous if a metric measuring posterior likelihood is below a certain threshold (e.g. mahalanobis distance below some threshold)
+    Method:
+        1. List every possible contiguous interval in the time series that could contain an anomaly, based on priors (e.g., minimum and maximum anoamly duration).
+        2. Fit the entire time series with a GP and store the optimized parameters (and, optionally, the full precision matrix if using dynamic programming).
+        3. For each candidate interval, compute the posterior likelihood of the test interval given a MultivariateNormal distribution fit to the rest of the data.
+           Optionally, use dynamic programming to compute the posterior likelihoods more efficiently by leveraging the precision matrix of the full GP fit.
+        4. Flag intervals as anomalous if a metric measuring posterior likelihood is below a certain threshold (e.g. mahalanobis distance below some threshold)
     """
+
     def __init__(
         self,
-        x,                 # Map to Search.x
-        y,                 # Map to Search.y
-        dominant_period,   # Map to Search.dominant_period
-        device="cpu",      # Map to Search.device
+        x,  # Map to Search.x
+        y,  # Map to Search.y
+        dominant_period,  # Map to Search.dominant_period
+        device="cpu",  # Map to Search.device
         min_anomaly_len=50,
         max_anomaly_len=100,
         window_slide_step=100,
@@ -38,7 +43,7 @@ class ExhaustiveSearch(Search):
     ):
         """
         Initialize the ExhaustiveSearch class and the base Search class with the provided parameters.
-        
+
         :param x (np.ndarray): x array of the light curve
         :param y (np.ndarray): y array of the light curve
         :param dominant_period (float): dominant period of the light curve
@@ -48,19 +53,14 @@ class ExhaustiveSearch(Search):
         :param window_slide_step (int): step size for sliding the window across the time series (default: 1)
         :param window_size_step (int): step size for varying the size of the candidate intervals (default: 1)
         :param assume_independent (bool): if True, assumes independence between points for speed. False is not yet implemented and will be ignored for now. (default: True)
-        :param which_test_metric (str): metric to use for evaluating the likelihood of test intervals. 
+        :param which_test_metric (str): metric to use for evaluating the likelihood of test intervals.
                Options are 'pval', 'mahalanobis', 'nlpd', 'msll', 'rmse', 'mll', or default is 'll' (log-likelihood)
         """
 
         # Initialize the Base Search class
         # This handles self.x, self.y, self.x_tensor, self.y_tensor, and self.device
         # It also intializes self.num_detected_anomalies, self.flagged_anomalous, self.flagged_anomalous_signal, and self.runtime
-        super().__init__(
-            x=x,
-            y=y,
-            dominant_period=dominant_period,
-            device=device
-        )
+        super().__init__(x=x, y=y, dominant_period=dominant_period, device=device)
 
         # Initialize parameters
         self.min_anomaly_len = min_anomaly_len
@@ -73,10 +73,14 @@ class ExhaustiveSearch(Search):
 
         # Check that min_anomaly_len is at least 1 and that max_anomaly_len is at least min_anomaly_len
         if min_anomaly_len < 1:
-            warnings.warn("min_anomaly_len must be at least 1. Setting min_anomaly_len to 1.")
+            warnings.warn(
+                "min_anomaly_len must be at least 1. Setting min_anomaly_len to 1."
+            )
             self.min_anomaly_len = 1
         if max_anomaly_len < min_anomaly_len:
-            warnings.warn("max_anomaly_len must be at least min_anomaly_len. Setting max_anomaly_len to 10 x min_anomaly_len.")
+            warnings.warn(
+                "max_anomaly_len must be at least min_anomaly_len. Setting max_anomaly_len to 10 x min_anomaly_len."
+            )
             self.max_anomaly_len = 10 * self.min_anomaly_len
 
         # Possible candidate intervals
@@ -98,17 +102,17 @@ class ExhaustiveSearch(Search):
         filename="",
         refit=False,
         neg_anomaly_only=False,
-        pos_anomaly_only=False, 
-        dynamic_programming=False, 
+        pos_anomaly_only=False,
+        dynamic_programming=False,
         threshold=1e-3,
         num_intervals_to_flag=None,
         silent=True,
         plot=False,
-        **kwargs
+        **kwargs,
     ):
         """
         Main function to perform the exhaustive search for anomalies in the time series data.
-        
+
         :param filename (str): If provided, saves the results to this file (default: "")
         :param refit (bool): If true, refit the GP for each interval. If false, use the same GP for all intervals (faster but less accurate) (default: False)
         :param neg_anomaly_only (bool): Whether to only flag negative anomalies (i.e., dips) instead of both positive and negative anomalies (default: False)
@@ -118,23 +122,33 @@ class ExhaustiveSearch(Search):
         :param num_intervals_to_flag (int or None): If not None, flag the top num_intervals_to_flag intervals as anomalous based on the test metric, instead of using a threshold (default: None)
         :param silent (bool): If true, suppresses print statements during training (default: True)
         :param plot (bool): If true, plots the GP prediction and p-value for each candidate interval (default: False)
-        **kwargs: Additional keyword arguments to pass to the GP training function, such as training_iterations, lr, early_stopping, etc.
+        :param kwargs: Additional keyword arguments to pass to the GP training function, such as training_iterations, lr, early_stopping, etc.
+
         """
         start_time = time.time()
 
         # Check that both threshold and num_intervals_to_flag are not provided at the same time
         if threshold is not None and num_intervals_to_flag is not None:
-            warnings.warn("Both threshold and num_intervals_to_flag are provided. Only one can be used. Setting num_intervals_to_flag to None and using threshold for flagging anomalous intervals.")
+            warnings.warn(
+                "Both threshold and num_intervals_to_flag are provided. Only one can be used. Setting num_intervals_to_flag to None and using threshold for flagging anomalous intervals."
+            )
             num_intervals_to_flag = None
 
         # Check that if dynamic_programming is True, then refit must be False
         if dynamic_programming and refit:
-            warnings.warn("Dynamic programming only works if refit is False. Setting refit to False.")
+            warnings.warn(
+                "Dynamic programming only works if refit is False. Setting refit to False."
+            )
             refit = False
 
         # Check if dynamic_programming is True, then which_test_metric must be "pval" or "mahalanobis"
-        if dynamic_programming and self.which_test_metric not in ["pval", "mahalanobis"]:
-            warnings.warn("Dynamic programming only works with pval or mahalanobis metrics. Setting self.which_test_metric to 'pval'.")
+        if dynamic_programming and self.which_test_metric not in [
+            "pval",
+            "mahalanobis",
+        ]:
+            warnings.warn(
+                "Dynamic programming only works with pval or mahalanobis metrics. Setting self.which_test_metric to 'pval'."
+            )
             self.which_test_metric = "pval"
 
         # Initialize
@@ -160,7 +174,9 @@ class ExhaustiveSearch(Search):
         # If not refitting at each iteration, fit the GP to the entire data once and save the kernel parameters
         if not refit:
             # Build GP model on full x and y data
-            model, likelihood, _, _ = self.build_gp_model(x=self.x_tensor, y=self.y_tensor)
+            model, likelihood, _, _ = self.build_gp_model(
+                x=self.x_tensor, y=self.y_tensor
+            )
 
             # Train model to get initial fit
             model, likelihood, _ = self.train_gp(
@@ -169,7 +185,7 @@ class ExhaustiveSearch(Search):
                 x=self.x_tensor,
                 y=self.y_tensor,
                 device=self.device,
-                **kwargs
+                **kwargs,
             )
 
             # Update kernel and mean with learned parameters
@@ -179,12 +195,12 @@ class ExhaustiveSearch(Search):
             # If using dynamic programming, precompute and cache the precision matrix for the full dataset
             if dynamic_programming:
                 mu_full, J_full = precompute_precision(
-                    full_x = self.x_tensor, 
-                    mean_module = mean,
-                    kernel_module = kernel,
-                    noise_variance = model.likelihood.noise.item(),
-                    dtype = torch.float64,  # or float32
-                    device = self.device,
+                    full_x=self.x_tensor,
+                    mean_module=mean,
+                    kernel_module=kernel,
+                    noise_variance=model.likelihood.noise.item(),
+                    dtype=torch.float64,  # or float32
+                    device=self.device,
                 )
 
         # Iterate over each possible anomaly interval
@@ -195,19 +211,34 @@ class ExhaustiveSearch(Search):
             mask_test = ~mask_train
 
             # Create train data without interval
-            x_train = torch.tensor(self.x[mask_train], dtype=torch.float32).to(self.device)
-            y_train = torch.tensor(self.y[mask_train], dtype=torch.float32).to(self.device)
-            
+            x_train = torch.tensor(self.x[mask_train], dtype=torch.float32).to(
+                self.device
+            )
+            y_train = torch.tensor(self.y[mask_train], dtype=torch.float32).to(
+                self.device
+            )
+
             # Create test data with interval
-            x_test = torch.tensor(self.x[mask_test], dtype=torch.float32).to(self.device)
-            y_test = torch.tensor(self.y[mask_test], dtype=torch.float32).to(self.device)
+            x_test = torch.tensor(self.x[mask_test], dtype=torch.float32).to(
+                self.device
+            )
+            y_test = torch.tensor(self.y[mask_test], dtype=torch.float32).to(
+                self.device
+            )
 
             # If refitting at each iteration, fit the GP to the training data without the interval
             if refit:
-                if 'model' in locals():
+                if "model" in locals():
                     del likelihood
 
-                model, likelihood, _, _ = self.build_gp_model(x_train, y_train, kernel=init_kernel, mean=init_mean, likelihood=init_likelihood, device=self.device) # Note: initializing from previous hyperparameters
+                model, likelihood, _, _ = self.build_gp_model(
+                    x_train,
+                    y_train,
+                    kernel=init_kernel,
+                    mean=init_mean,
+                    likelihood=init_likelihood,
+                    device=self.device,
+                )  # Note: initializing from previous hyperparameters
 
                 # Train GP on training data
                 model, likelihood, _ = self.train_gp(
@@ -216,7 +247,7 @@ class ExhaustiveSearch(Search):
                     x=x_train,
                     y=y_train,
                     device=self.device,
-                    **kwargs
+                    **kwargs,
                 )
 
                 # Evaluate metric for prediction on test data
@@ -232,18 +263,25 @@ class ExhaustiveSearch(Search):
                 if dynamic_programming:
                     # Use precomputed precision to get posterior on test interval
                     y_pred = interval_posterior_from_precision(
-                        mu = mu_full,
-                        J = J_full,
-                        full_y = self.y_tensor,
-                        mask_train = mask_train,
-                        mask_test = mask_test,
-                        dtype = J_full.dtype, 
+                        mu=mu_full,
+                        J=J_full,
+                        full_y=self.y_tensor,
+                        mask_train=mask_train,
+                        mask_test=mask_test,
+                        dtype=J_full.dtype,
                     )
 
                 else:
                     # Don't refit; but create a new GP model over train data with previously optimized parameters
-                    model, likelihood, _, _ = self.build_gp_model(x_train, y_train, kernel=kernel, mean=mean, likelihood=likelihood, device=self.device) # Note: initializing from previous hyperparameters
-                    
+                    model, likelihood, _, _ = self.build_gp_model(
+                        x_train,
+                        y_train,
+                        kernel=kernel,
+                        mean=mean,
+                        likelihood=likelihood,
+                        device=self.device,
+                    )  # Note: initializing from previous hyperparameters
+
                     # Evaluate metric for prediction on test data
                     model.eval()
                     likelihood.eval()
@@ -260,7 +298,10 @@ class ExhaustiveSearch(Search):
                 self.pos_or_neg_intervals.append(1)
 
             # Depending on which_test_metric, compute the appropriate metric to evaluate the likelihood of the test interval under the model trained on the train interval
-            if self.which_test_metric == "pval" or self.which_test_metric == "mahalanobis":
+            if (
+                self.which_test_metric == "pval"
+                or self.which_test_metric == "mahalanobis"
+            ):
                 maha_dist, p_value = compute_interval_pvalue(y_test, y_pred)
 
                 if self.which_test_metric == "pval":
@@ -286,11 +327,15 @@ class ExhaustiveSearch(Search):
                         )
 
                     elif self.which_test_metric == "msll":
-                        metric = gpytorch.metrics.mean_standardized_log_loss(y_pred, y_curr)
+                        metric = gpytorch.metrics.mean_standardized_log_loss(
+                            y_pred, y_curr
+                        )
 
                     elif self.which_test_metric == "rmse":
                         pred_mean = y_pred.mean.cpu().numpy()
-                        metric = np.sqrt(np.mean((pred_mean - y_curr.cpu().numpy()) ** 2))
+                        metric = np.sqrt(
+                            np.mean((pred_mean - y_curr.cpu().numpy()) ** 2)
+                        )
 
                     elif self.which_test_metric == "mll":
                         mll_func = ExactMarginalLogLikelihood(likelihood, model)
@@ -321,7 +366,14 @@ class ExhaustiveSearch(Search):
             if plot:
                 if dynamic_programming:
                     # Create a train GP model just to get the kernel and mean for plotting; but we won't use it for inference
-                    model = model, likelihood, _, _ = self.build_gp_model(x_train, y_train, kernel=kernel, mean=mean, likelihood=likelihood, device=self.device)
+                    model = model, likelihood, _, _ = self.build_gp_model(
+                        x_train,
+                        y_train,
+                        kernel=kernel,
+                        mean=mean,
+                        likelihood=likelihood,
+                        device=self.device,
+                    )
 
                     # Evaluate metric for prediction on test data
                     model.eval()
@@ -340,11 +392,23 @@ class ExhaustiveSearch(Search):
                 plt.fill_between(
                     self.x, pred_mean - one_stdev, pred_mean + one_stdev, alpha=0.5
                 )
-                plt.scatter(self.x, self.y, c='black', s=3, alpha=0.5, label="Observed")
+                plt.scatter(self.x, self.y, c="black", s=3, alpha=0.5, label="Observed")
                 plt.scatter(
-                    self.x[start:end], self.y[start:end], c='red', marker='x', s=10, alpha=0.8, label="Held Out Interval"
+                    self.x[start:end],
+                    self.y[start:end],
+                    c="red",
+                    marker="x",
+                    s=10,
+                    alpha=0.8,
+                    label="Held Out Interval",
                 )
-                plt.plot(self.x, pred_mean, lw=1, alpha=0.7, label="Predicted $\pm$ 1 $\sigma$")
+                plt.plot(
+                    self.x,
+                    pred_mean,
+                    lw=1,
+                    alpha=0.7,
+                    label=r"Predicted $\pm$ 1 $\sigma$",
+                )
 
                 plt.xlabel("Time")
                 plt.ylabel("Flux")
@@ -359,10 +423,10 @@ class ExhaustiveSearch(Search):
                     f.write(f"{start},{end},{interval_metric}\n")
 
             # Delete all variables to free up memory
-            if 'model' in locals():
+            if "model" in locals():
                 del model
-            
-            if 'f_pred' in locals():
+
+            if "f_pred" in locals():
                 del f_pred
 
             del x_train
@@ -375,7 +439,6 @@ class ExhaustiveSearch(Search):
             del y_test
             gc.collect()
             torch.cuda.empty_cache()
-
 
         # After iterating through all intervals, update self.num_detected_anomalies, self.flagged_anomalous, and self.anomalous_signal based on the intervals found
         if threshold is not None:
@@ -391,7 +454,7 @@ class ExhaustiveSearch(Search):
                     self.anomalous_signal[start:end] = metric
                     self.num_detected_anomalies += 1
 
-        elif num_intervals_to_flag is not None:            
+        elif num_intervals_to_flag is not None:
             # Flag the top num_intervals_to_flag intervals as anomalous based on the metric
             sorted_indices = np.argsort(self.metrics)
             for i in range(min(num_intervals_to_flag, len(self.intervals))):

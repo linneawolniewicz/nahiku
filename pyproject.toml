@@ -1,23 +1,66 @@
 [project]
 name = "nahiku"
-version = "0.1.0"
-description = "Add your description here"
+version = "0.1.1"
+description = "A package for dipper detection in lightcurves"
 readme = "README.md"
 authors = [
     { name = "Linnea Wolniewicz", email = "linnea@wolniewicz.com" }
 ]
 requires-python = ">=3.12"
 dependencies = [
+    "alembic>=1.13.1",
     "astropy==6.1.0",
     "astroquery==0.4.11",
+    "autograd>=1.8.0",
+    "beautifulsoup4>=4.14.2",
+    "bokeh>=3.8.2",
+    "colorlog>=6.8.2",
+    "fbpca>=1.0",
+    "fsspec>=2024.6.0",
+    "future>=1.0.0",
+    "gpytorch==1.11",
+    "html5lib>=1.1",
+    "jaxtyping==0.2.30",
+    "joblib>=1.4.2",
     "lightkurve==2.5.0",
+    "lightning>=2.2.5",
+    "lightning-utilities>=0.11.2",
     "matplotlib==3.8.4",
+    "memoization>=0.4.0",
+    "mpmath>=1.3.0",
+    "narwhals>=2.7.0",
+    "networkx>=3.2.1",
     "numpy==1.26.4",
+    "oktopus>=0.1.2",
+    "optuna>=3.6.1",
     "pandas==2.2.2",
+    "patsy>=1.0.2",
+    "pillow>=10.3.0",
+    "psutil>=5.9.0",
+    "pyvo>=1.8",
+    "pyyaml>=6.0.1",
+    "scikit-learn>=1.5.0",
     "scipy==1.13.1",
+    "sqlalchemy>=2.0.30",
+    "sympy>=1.12",
+    "threadpoolctl>=3.5.0",
     "torch==2.3.1",
-    "torchaudio==2.3.1",
+    "torchmetrics>=1.4.0.post0",
     "torchvision==0.18.1",
+    "torchaudio==2.3.1",
+    "tqdm>=4.66.4",
+    "uncertainties>=3.2.0",
+    "xyzservices>=2025.4.0",
+]
+
+[dependency-groups]
+dev = [
+    "black>=25.1.0",
+    "mypy>=1.0.0",
+    "pytest>=8.0.0",
+    "pytest-cov>=4.0.0",
+    "sphinx>=7.0.0",
+    "sphinx-rtd-theme>=1.2.0",
 ]
 
 [build-system]
@@ -30,6 +73,12 @@ url = "https://download.pytorch.org/whl/cu118"
 explicit = true
 
 [tool.uv.sources]
-torch = [{ index = "pytorch-cu118" }]
-torchvision = [{ index = "pytorch-cu118" }]
-torchaudio = [{ index = "pytorch-cu118" }]
+torch = [
+  { index = "pytorch-cu118", marker = "sys_platform != 'darwin'" },
+]
+torchvision = [
+  { index = "pytorch-cu118", marker = "sys_platform != 'darwin'" },
+]
+torchaudio = [
+  { index = "pytorch-cu118", marker = "sys_platform != 'darwin'" },
+]

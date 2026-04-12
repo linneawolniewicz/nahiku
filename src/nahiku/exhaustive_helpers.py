@@ -1,11 +1,18 @@
 import torch
 from scipy.stats import chi2
 from gpytorch.lazy import NonLazyTensor
-from gpytorch.distributions import MultivariateNormal 
+from gpytorch.distributions import MultivariateNormal
+
 
 @torch.no_grad()
-def precompute_precision(full_x, mean_module, kernel_module, noise_variance,
-                         dtype=torch.float64, device="cpu"):
+def precompute_precision(
+    full_x,
+    mean_module,
+    kernel_module,
+    noise_variance,
+    dtype=torch.float64,
+    device="cpu",
+):
     """
     Build μ and J = (K + σ²I)^{-1} for the *full* X once.
     Use float64 here for numerical stability; you can cast later if desired.
@@ -21,7 +28,7 @@ def precompute_precision(full_x, mean_module, kernel_module, noise_variance,
     N = X.shape[0]
 
     # Mean on full grid
-    mu = mean_module(X)            # shape [N]
+    mu = mean_module(X)  # shape [N]
 
     # Full noisy covariance
     # kernel_module(X) returns a LazyTensor; materialize once.
@@ -29,14 +36,17 @@ def precompute_precision(full_x, mean_module, kernel_module, noise_variance,
     K = K + noise_variance * torch.eye(N, dtype=dtype, device=device)
 
     # Cholesky + precision
-    L = torch.linalg.cholesky(K)           # O(N^3) once
+    L = torch.linalg.cholesky(K)  # O(N^3) once
     I = torch.eye(N, dtype=dtype, device=device)
-    J = torch.cholesky_solve(I, L)         # (K + σ²I)^{-1}
+    J = torch.cholesky_solve(I, L)  # (K + σ²I)^{-1}
 
     return mu, J
 
+
 @torch.no_grad()
-def interval_posterior_from_precision(mu, J, full_y, mask_train, mask_test, dtype=torch.float64):
+def interval_posterior_from_precision(
+    mu, J, full_y, mask_train, mask_test, dtype=torch.float64
+):
     """
     Compute the posterior distribution p(y_test | y_train) using precision matrix J and mean mu.
     This function computes the conditional posterior distribution over test points given training data,
@@ -52,7 +62,7 @@ def interval_posterior_from_precision(mu, J, full_y, mask_train, mask_test, dtyp
     """
     device, dtype = mu.device, mu.dtype
     mask_train = torch.as_tensor(mask_train, device=device)
-    mask_test  = torch.as_tensor(mask_test,  device=device)
+    mask_test = torch.as_tensor(mask_test, device=device)
 
     idx_T = mask_train.nonzero(as_tuple=True)[0]
     idx_S = mask_test.nonzero(as_tuple=True)[0]
@@ -67,25 +77,27 @@ def interval_posterior_from_precision(mu, J, full_y, mask_train, mask_test, dtyp
 
     # Cov(y_S | y_T) = J_SS^{-1}
     L_SS = torch.linalg.cholesky(J_SS)
-    cov_S = torch.cholesky_inverse(L_SS) # == J_SS^{-1} == Cov(y_S | y_T)
+    cov_S = torch.cholesky_inverse(L_SS)  # == J_SS^{-1} == Cov(y_S | y_T)
 
     # Mean: μ_S - J_SS^{-1} J_ST (y_T - μ_T)
     if dtype == torch.float32:
-        r_T = (full_y[idx_T] - mu[idx_T]).unsqueeze(-1).float() # (y_T - μ_T)
+        r_T = (full_y[idx_T] - mu[idx_T]).unsqueeze(-1).float()  # (y_T - μ_T)
     else:
-        r_T = (full_y[idx_T] - mu[idx_T]).unsqueeze(-1).double() # (y_T - μ_T)
-    rhs = J_ST @ r_T # J_ST (y_T - μ_T)
-    delta = torch.cholesky_solve(rhs, L_SS).squeeze(-1) # J_SS^{-1} (J_ST (y_T - μ_T)), solved as J_SS delta = rhs; cholesky_solve(B, L) solves Ax = B where LL^T = A
-    mean_S = mu[idx_S] - delta # μ_S - J_SS^{-1} J_ST (y_T - μ_T)
+        r_T = (full_y[idx_T] - mu[idx_T]).unsqueeze(-1).double()  # (y_T - μ_T)
+    rhs = J_ST @ r_T  # J_ST (y_T - μ_T)
+    delta = torch.cholesky_solve(rhs, L_SS).squeeze(
+        -1
+    )  # J_SS^{-1} (J_ST (y_T - μ_T)), solved as J_SS delta = rhs; cholesky_solve(B, L) solves Ax = B where LL^T = A
+    mean_S = mu[idx_S] - delta  # μ_S - J_SS^{-1} J_ST (y_T - μ_T)
 
     return MultivariateNormal(mean_S, NonLazyTensor(cov_S))
 
 
 def compute_interval_pvalue(y_true, mvn_pred):
     """
-    This function computes the Mahalanobis distance and corresponding p-value for a true observation under a predicted multivariate normal distribution. 
-    It attempts to compute the Mahalanobis distance using Cholesky decomposition for numerical stability, and falls back to direct solving 
-    if Cholesky fails (e.g., if the covariance is not positive definite). The p-value is computed based on the chi-squared distribution with degrees of freedom 
+    This function computes the Mahalanobis distance and corresponding p-value for a true observation under a predicted multivariate normal distribution.
+    It attempts to compute the Mahalanobis distance using Cholesky decomposition for numerical stability, and falls back to direct solving
+    if Cholesky fails (e.g., if the covariance is not positive definite). The p-value is computed based on the chi-squared distribution with degrees of freedom
     equal to the dimensionality of the data.
 
     :param y_true (torch.Tensor): shape (d,)
@@ -106,14 +118,18 @@ def compute_interval_pvalue(y_true, mvn_pred):
     except RuntimeError:
         # Log eigenvalue stats
         eigvals = torch.linalg.eigvalsh(cov)
-        print(f"[Cholesky Error] Eigenvalue stats: min={eigvals.min().item():.4e}, "
-              f"median={eigvals.median().item():.4e}, max={eigvals.max().item():.4e}")
+        print(
+            f"[Cholesky Error] Eigenvalue stats: min={eigvals.min().item():.4e}, "
+            f"median={eigvals.median().item():.4e}, max={eigvals.max().item():.4e}"
+        )
         print("Attempting Cholesky with added jitter...")
 
         # Try adding increasing jitter to the diagonal
         for jitter_scale in [1e-6, 1e-5, 1e-4, 1e-3]:
             try:
-                jitter = jitter_scale * torch.eye(cov.size(0), device=cov.device, dtype=cov.dtype)
+                jitter = jitter_scale * torch.eye(
+                    cov.size(0), device=cov.device, dtype=cov.dtype
+                )
                 L = torch.linalg.cholesky(cov + jitter)
                 alpha = torch.cholesky_solve(delta.unsqueeze(-1), L)
                 success = True
@@ -123,10 +139,12 @@ def compute_interval_pvalue(y_true, mvn_pred):
                 continue
 
     if not success:
-        print("All Cholesky attempts failed. Falling back to direct solve (cov may not be PSD).")
+        print(
+            "All Cholesky attempts failed. Falling back to direct solve (cov may not be PSD)."
+        )
         alpha = torch.linalg.solve(cov, delta.unsqueeze(-1))
 
-    # Mahalanobis distance squared = delta.T @ cov^-1 @ delta 
+    # Mahalanobis distance squared = delta.T @ cov^-1 @ delta
     maha_sq = (delta.unsqueeze(0) @ alpha).item()
     maha_dist = maha_sq**0.5
 

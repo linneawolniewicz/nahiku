@@ -5,30 +5,32 @@ import warnings
 import numpy as np
 import matplotlib.pyplot as plt
 
-from search import Search
+from .search import Search
 
 from gpytorch.mlls import ExactMarginalLogLikelihood
 from scipy.ndimage import minimum_filter1d
 
+
 class GreedySearch(Search):
     """
-        This class implements a greedy search algorithm to identify anomalous intervals in a time series using Gaussian Processes.
+    This class implements a greedy search algorithm to identify anomalous intervals in a time series using Gaussian Processes.
 
-        Method:
-            1. Perform GP regression on the time series.
-            2. Find the most significant outlier interval (based on sum of residuals) of length len_deviant.
-            3. Exclude the outlier interval and redo regression. See if GP improves by some threshold.
-            4. Expand outlier interval in both directions by expansion_param and redo step 3.
-            5. Repeat step 4 as long as GP improves the fit by some threshold.
-            6. If no improvement, define anomaly signal as the difference between data and regression in the outlier interval of points.
-            7. Repeat steps 2-6 while there are still points above the num_sigma_threshold.
+    Method:
+        1. Perform GP regression on the time series.
+        2. Find the most significant outlier interval (based on sum of residuals) of length len_deviant.
+        3. Exclude the outlier interval and redo regression. See if GP improves by some threshold.
+        4. Expand outlier interval in both directions by expansion_param and redo step 3.
+        5. Repeat step 4 as long as GP improves the fit by some threshold.
+        6. If no improvement, define anomaly signal as the difference between data and regression in the outlier interval of points.
+        7. Repeat steps 2-6 while there are still points above the num_sigma_threshold.
     """
+
     def __init__(
         self,
-        x,                 # Map to Search.x
-        y,                 # Map to Search.y
-        dominant_period,   # Map to Search.dominant_period
-        device="cpu",      # Map to Search.device
+        x,  # Map to Search.x
+        y,  # Map to Search.y
+        dominant_period,  # Map to Search.dominant_period
+        device="cpu",  # Map to Search.device
         which_grow_metric="mll",
         y_err=None,
         num_sigma_threshold=3,
@@ -37,7 +39,7 @@ class GreedySearch(Search):
     ):
         """
         Initialize the GreedySearch class and the base Search class with the provided parameters.
-        
+
         :param x (np.ndarray): x array of the light curve
         :param y (np.ndarray): y array of the light curve
         :param dominant_period (float): dominant period of the light curve
@@ -52,12 +54,7 @@ class GreedySearch(Search):
         # Initialize the Base Search class
         # This handles self.x, self.y, self.x_tensor, self.y_tensor, and self.device
         # It also intializes self.num_detected_anomalies, self.flagged_anomalous, self.flagged_anomalous_signal, and self.runtime
-        super().__init__(
-            x=x,
-            y=y,
-            dominant_period=dominant_period,
-            device=device
-        )
+        super().__init__(x=x, y=y, dominant_period=dominant_period, device=device)
 
         # If y_err is not provided, set y_err = 0 for all points
         if y_err is None:
@@ -80,7 +77,9 @@ class GreedySearch(Search):
 
         # Check that len_deviant is valid
         if len_deviant <= 0:
-            warnings.warn("len_deviant must be greater than 0. Setting len_deviant = 1.")
+            warnings.warn(
+                "len_deviant must be greater than 0. Setting len_deviant = 1."
+            )
             self.len_deviant = 1
         else:
             self.len_deviant = len_deviant
@@ -108,36 +107,27 @@ class GreedySearch(Search):
             label="New Flagged Anomaly",
         )
         axs[0].scatter(
-            self.x_orig, 
-            self.y_orig, 
-            c='black', 
-            s=3, 
-            alpha=0.5,
-            label="Observed"
+            self.x_orig, self.y_orig, c="black", s=3, alpha=0.5, label="Observed"
         )
         axs[0].scatter(
             self.x_orig[left_edge:right_edge],
             self.y_orig[left_edge:right_edge],
-            c='red', 
-            s=10, 
-            marker='x', 
-            alpha=0.8, 
+            c="red",
+            s=10,
+            marker="x",
+            alpha=0.8,
         )
         axs[0].scatter(
             self.x_orig[(self.flagged_anomalous == 1)],
             self.y_orig[(self.flagged_anomalous == 1)],
-            c='red', 
-            s=10, 
-            marker='x', 
-            alpha=0.8, 
+            c="red",
+            s=10,
+            marker="x",
+            alpha=0.8,
             label="Flagged as Anomalous",
         )
-        axs[0].plot(
-            x, pred_mean, lw=1, alpha=0.7, label="GP Mean Prediction"
-        )
-        axs[0].set_ylim(
-            np.min(self.y_orig), np.max(self.y_orig)
-        )
+        axs[0].plot(x, pred_mean, lw=1, alpha=0.7, label="GP Mean Prediction")
+        axs[0].set_ylim(np.min(self.y_orig), np.max(self.y_orig))
         axs[0].legend()
         axs[0].set_xlim(np.min(self.x_orig), np.max(self.x_orig))
         axs[0].set_xlabel("Time")
@@ -163,19 +153,19 @@ class GreedySearch(Search):
         )
         axs[1].scatter(
             self.x,
-            residuals, 
-            c='black', 
-            s=3, 
+            residuals,
+            c="black",
+            s=3,
             alpha=0.5,
-            label="|Observed - GP Mean Prediction|"
+            label="|Observed - GP Mean Prediction|",
         )
         axs[1].scatter(
             self.x[left_edge:right_edge],
             residuals[left_edge:right_edge],
-            c='red', 
-            s=10, 
-            marker='x', 
-            alpha=0.8, 
+            c="red",
+            s=10,
+            marker="x",
+            alpha=0.8,
             label="New Flagged as Anomalous",
         )
         axs[1].legend()
@@ -185,27 +175,27 @@ class GreedySearch(Search):
         plt.tight_layout()
         plt.show()
 
-
     def search_for_anomaly(
         self,
-        refit=False,  
+        refit=False,
         neg_anomaly_only=False,
-        pos_anomaly_only=False, 
+        pos_anomaly_only=False,
         plot=False,
         detection_range=None,
         update_threshold=False,
-        **kwargs
+        **kwargs,
     ):
         """
         Main function to perform the greedy search for anomalies in the time series data.
-        
+
         :param refit (bool): Whether to refit the GP model at each iteration of the greedy search (default: True)
         :param neg_anomaly_only (bool): Whether to only flag negative anomalies (i.e., dips) instead of both positive and negative anomalies (default: False)
         :param pos_anomaly_only (bool): Whether to only flag positive anomalies (i.e., flares) instead of both positive and negative anomalies (default: False)
         :param plot (bool): Whether to the light curve, GP fit, and detected anomalies at each iteration of the greedy search (default: False)
         :param detection_range (tuple or None): Tuple specifying the range of x values to consider for anomaly detection. If None, considers the entire range of x. Default is None.
         :param update_threshold (bool): Whether to update the num_sigma_threshold after each detected anomaly
-        **kwargs: Additional keyword arguments to pass to the GP training function, such as training_iterations, lr, early_stopping, etc.
+        :param kwargs: Additional keyword arguments to pass to the GP training function, such as training_iterations, lr, early_stopping, etc.
+
         """
         start_time = time.time()
 
@@ -219,7 +209,7 @@ class GreedySearch(Search):
             x=self.x_tensor,
             y=self.y_tensor,
             device=self.device,
-            **kwargs
+            **kwargs,
         )
 
         # Update kernel and mean with learned parameters
@@ -241,7 +231,14 @@ class GreedySearch(Search):
 
         # Step 7 (repeat steps 2-6 while there are still points above the num_sigma_threshold)
         while exist_points_above_threshold:
-            model, likelihood, _, _ = self.build_gp_model(x=self.x_tensor, y=self.y_tensor, kernel=kernel, mean=mean, likelihood=likelihood, device=self.device) # Note: initializing from previous hyperparameters
+            model, likelihood, _, _ = self.build_gp_model(
+                x=self.x_tensor,
+                y=self.y_tensor,
+                kernel=kernel,
+                mean=mean,
+                likelihood=likelihood,
+                device=self.device,
+            )  # Note: initializing from previous hyperparameters
 
             # Re-fit the GP on non-anomalous data
             if refit:
@@ -251,7 +248,7 @@ class GreedySearch(Search):
                     x=self.x_tensor,
                     y=self.y_tensor,
                     device=self.device,
-                    **kwargs
+                    **kwargs,
                 )
 
             # Get mean prediction from the learned model over x and x_orig
@@ -262,29 +259,38 @@ class GreedySearch(Search):
                 observed_pred = likelihood(model(self.x_tensor))
                 pred_mean = observed_pred.mean.cpu().numpy()
 
-                pred_full_x = model(
-                    torch.tensor(self.x_orig, dtype=torch.float32).to(self.device)
-                ).mean.cpu().numpy()
+                pred_full_x = (
+                    model(
+                        torch.tensor(self.x_orig, dtype=torch.float32).to(self.device)
+                    )
+                    .mean.cpu()
+                    .numpy()
+                )
 
             # Compute the minimum value in each window of size len_deviant in the residuals array
             residuals = np.abs(pred_mean - self.y)
-            min_values = minimum_filter1d(residuals, size=self.len_deviant, mode="nearest")
+            min_values = minimum_filter1d(
+                residuals, size=self.len_deviant, mode="nearest"
+            )
             max_min_idx = np.argmax(min_values)
 
             # Intialize variables for expanding anomalous region
             left_edge = max_min_idx
             right_edge = max_min_idx + self.len_deviant
-            diff_metric = float('inf')
-            metric = float('inf')
+            diff_metric = float("inf")
+            metric = float("inf")
 
             # Plot
-            if plot: self.plot_greedy(self.x, pred_mean, left_edge, right_edge, residuals)
+            if plot:
+                self.plot_greedy(self.x, pred_mean, left_edge, right_edge, residuals)
 
             # While the metric is decreasing, expand the anomalous edges
             while diff_metric > 0:
                 # Subset x, y, and y_err by left_edge and right_edge
                 # Do not need to worry about masking by anomalous, because anomalous points are removed at the end of the loop
-                subset = (np.arange(len(self.x)) > right_edge) | (np.arange(len(self.x)) < left_edge)
+                subset = (np.arange(len(self.x)) > right_edge) | (
+                    np.arange(len(self.x)) < left_edge
+                )
                 x_sub = torch.tensor(self.x[subset], dtype=torch.float32).to(
                     self.device
                 )
@@ -292,7 +298,14 @@ class GreedySearch(Search):
                     self.device
                 )
 
-                model, likelihood, _, _ = self.build_gp_model(x=x_sub, y=y_sub, kernel=kernel, mean=mean, likelihood=likelihood, device=self.device) # Note: initializing from previous hyperparameters
+                model, likelihood, _, _ = self.build_gp_model(
+                    x=x_sub,
+                    y=y_sub,
+                    kernel=kernel,
+                    mean=mean,
+                    likelihood=likelihood,
+                    device=self.device,
+                )  # Note: initializing from previous hyperparameters
 
                 # Re-fit the GP on non-anomalous data
                 if refit:
@@ -302,7 +315,7 @@ class GreedySearch(Search):
                         x=x_sub,
                         y=y_sub,
                         device=self.device,
-                        **kwargs
+                        **kwargs,
                     )
 
                 # Predict on the subset and on the full x_orig
@@ -312,9 +325,15 @@ class GreedySearch(Search):
                 with torch.no_grad(), gpytorch.settings.fast_pred_var():
                     observed_pred_sub = likelihood(model(x_sub))
                     pred_mean_sub = observed_pred_sub.mean.cpu().numpy()
-                    pred_full_x = model(
-                        torch.tensor(self.x_orig, dtype=torch.float32).to(self.device)
-                    ).mean.cpu().numpy()
+                    pred_full_x = (
+                        model(
+                            torch.tensor(self.x_orig, dtype=torch.float32).to(
+                                self.device
+                            )
+                        )
+                        .mean.cpu()
+                        .numpy()
+                    )
 
                 # Calculate metric difference
                 old_metric = metric
@@ -354,13 +373,23 @@ class GreedySearch(Search):
                     right_edge += self.expansion_param
 
                 # Plot
-                if plot: self.plot_greedy(x_sub, pred_mean_sub, left_edge, right_edge, residuals)
+                if plot:
+                    self.plot_greedy(
+                        x_sub, pred_mean_sub, left_edge, right_edge, residuals
+                    )
 
             # Remove left_edge:right_edge from x, y, and y_err for the next iteration of the greedy search
             # Handle case where left_edge = 0 or right_edge = len(self.x)
-            self.x = np.delete(self.x, np.arange(min(left_edge, 0), max(right_edge, len(self.x))))
-            self.y = np.delete(self.y, np.arange(min(left_edge, 0), max(right_edge, len(self.y))))
-            self.y_err = np.delete(self.y_err, np.arange(min(left_edge, 0), max(right_edge, len(self.y_err))))
+            self.x = np.delete(
+                self.x, np.arange(min(left_edge, 0), max(right_edge, len(self.x)))
+            )
+            self.y = np.delete(
+                self.y, np.arange(min(left_edge, 0), max(right_edge, len(self.y)))
+            )
+            self.y_err = np.delete(
+                self.y_err,
+                np.arange(min(left_edge, 0), max(right_edge, len(self.y_err))),
+            )
 
             self.x_tensor = torch.tensor(self.x, dtype=torch.float32).to(self.device)
             self.y_tensor = torch.tensor(self.y, dtype=torch.float32).to(self.device)
@@ -368,29 +397,66 @@ class GreedySearch(Search):
             # Update num_detected_anomalies, flagged_anomalous, and anomalous_signal with the new flagged anomaly from left_edge to right_edge
             if neg_anomaly_only:
                 # Check if the average of the residuals in the flagged region is negative
-                if np.mean(self.y_orig[left_edge:right_edge] - pred_full_x[left_edge:right_edge]) <= 0:
+                if (
+                    np.mean(
+                        self.y_orig[left_edge:right_edge]
+                        - pred_full_x[left_edge:right_edge]
+                    )
+                    <= 0
+                ):
                     self.num_detected_anomalies += 1
                     self.flagged_anomalous[left_edge:right_edge] = 1
-                    self.anomalous_signal[left_edge:right_edge] = minimum_filter1d(np.abs(self.y_orig[left_edge:right_edge] - pred_full_x[left_edge:right_edge]), size=self.len_deviant, mode="nearest")
+                    self.anomalous_signal[left_edge:right_edge] = minimum_filter1d(
+                        np.abs(
+                            self.y_orig[left_edge:right_edge]
+                            - pred_full_x[left_edge:right_edge]
+                        ),
+                        size=self.len_deviant,
+                        mode="nearest",
+                    )
                     print(f"Anomalous edges = {left_edge}:{right_edge}")
                 else:
-                    print(f"Not flagging edges {left_edge}:{right_edge} because not a negative anomaly (mean(truth - pred) = {np.mean(self.y_orig[left_edge:right_edge] - pred_full_x[left_edge:right_edge])}), and neg_anomaly_only is {neg_anomaly_only}. Still will remove edges from GP fit.")
-            
+                    print(
+                        f"Not flagging edges {left_edge}:{right_edge} because not a negative anomaly (mean(truth - pred) = {np.mean(self.y_orig[left_edge:right_edge] - pred_full_x[left_edge:right_edge])}), and neg_anomaly_only is {neg_anomaly_only}. Still will remove edges from GP fit."
+                    )
+
             elif pos_anomaly_only:
                 # Check if the average of the residuals in the flagged region is positive
-                if np.mean(self.y_orig[left_edge:right_edge] - pred_full_x[left_edge:right_edge]) >= 0:
+                if (
+                    np.mean(
+                        self.y_orig[left_edge:right_edge]
+                        - pred_full_x[left_edge:right_edge]
+                    )
+                    >= 0
+                ):
                     self.num_detected_anomalies += 1
                     self.flagged_anomalous[left_edge:right_edge] = 1
-                    self.anomalous_signal[left_edge:right_edge] = minimum_filter1d(np.abs(self.y_orig[left_edge:right_edge] - pred_full_x[left_edge:right_edge]), size=self.len_deviant, mode="nearest")
+                    self.anomalous_signal[left_edge:right_edge] = minimum_filter1d(
+                        np.abs(
+                            self.y_orig[left_edge:right_edge]
+                            - pred_full_x[left_edge:right_edge]
+                        ),
+                        size=self.len_deviant,
+                        mode="nearest",
+                    )
                     print(f"Anomalous edges = {left_edge}:{right_edge}")
                 else:
-                    print(f"Not flagging edges {left_edge}:{right_edge} because not a positive anomaly (mean(truth - pred) = {np.mean(self.y_orig[left_edge:right_edge] - pred_full_x[left_edge:right_edge])}), and pos_anomaly_only is {pos_anomaly_only}. Still will remove edges from GP fit.")
+                    print(
+                        f"Not flagging edges {left_edge}:{right_edge} because not a positive anomaly (mean(truth - pred) = {np.mean(self.y_orig[left_edge:right_edge] - pred_full_x[left_edge:right_edge])}), and pos_anomaly_only is {pos_anomaly_only}. Still will remove edges from GP fit."
+                    )
 
             else:
                 # Flag as anomalous regardless of whether it's a positive or negative anomaly
                 self.num_detected_anomalies += 1
                 self.flagged_anomalous[left_edge:right_edge] = 1
-                self.anomalous_signal[left_edge:right_edge] = minimum_filter1d(np.abs(self.y_orig[left_edge:right_edge] - pred_full_x[left_edge:right_edge]), size=self.len_deviant, mode="nearest")
+                self.anomalous_signal[left_edge:right_edge] = minimum_filter1d(
+                    np.abs(
+                        self.y_orig[left_edge:right_edge]
+                        - pred_full_x[left_edge:right_edge]
+                    ),
+                    size=self.len_deviant,
+                    mode="nearest",
+                )
                 print(f"Anomalous edges = {left_edge}:{right_edge}")
 
             # Predict on reduced x_tensor to get new residuals for threshold checking
@@ -408,10 +474,15 @@ class GreedySearch(Search):
                 self.threshold = self.num_sigma_threshold * np.sqrt(sum_variances)
             else:
                 # Remove points between left_edge and right_edge from the threshold
-                self.threshold = np.delete(self.threshold, np.arange(min(left_edge, 0), max(right_edge, len(self.threshold))))
+                self.threshold = np.delete(
+                    self.threshold,
+                    np.arange(min(left_edge, 0), max(right_edge, len(self.threshold))),
+                )
 
             # Compute the minimum value in each window of size len_deviant in the residuals array; check if there are still points above the threshold
-            min_values = minimum_filter1d(residuals, size=self.len_deviant, mode="nearest")
+            min_values = minimum_filter1d(
+                residuals, size=self.len_deviant, mode="nearest"
+            )
             exist_points_above_threshold = np.any(min_values > self.threshold)
 
         self.runtime = time.time() - start_time

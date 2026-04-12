@@ -9,6 +9,7 @@ from scipy.optimize import curve_fit
 import matplotlib.pyplot as plt
 import tqdm
 
+
 class Balmung:
     def __init__(self, time: np.ndarray, flux: np.ndarray):
         """The big cheese. does prewhitening
@@ -22,9 +23,13 @@ class Balmung:
         self.residual = np.copy(self.flux)
         self.removed = []
 
-    def prewhiten(self, fmin=None, fmax=None, minimum_snr=0, maxiter=200, diagnose=True):
+    def prewhiten(
+        self, fmin=None, fmax=None, minimum_snr=0, maxiter=200, diagnose=True
+    ):
         # Calculate initial amplitude spectrum
-        freq, amp = self.amplitude_spectrum(self.time, self.residual, fmin=fmin, fmax=fmax)
+        freq, amp = self.amplitude_spectrum(
+            self.time, self.residual, fmin=fmin, fmax=fmax
+        )
 
         # # Estimate noise level:
         # bkg = self.estimate_background(freq, amp)
@@ -73,7 +78,7 @@ class Balmung:
 
         # I don't expect this to happen.. but if the amplitude goes negative let's fix it:
         if popt[1] < 0:
-            popt[1] *= -1.
+            popt[1] *= -1.0
             popt[2] += np.pi
 
         return popt
@@ -101,7 +106,9 @@ class Balmung:
             ]
         ).T
 
-    def model(self, time:np.ndarray, freq:float, amp:float, phi:float) -> np.ndarray:
+    def model(
+        self, time: np.ndarray, freq: float, amp: float, phi: float
+    ) -> np.ndarray:
         """And at the heart of it all, a tiny model function.
 
         Args:
@@ -173,7 +180,12 @@ class Balmung:
         return nu_peak
 
     def amplitude_spectrum(
-        self, t, y, fmin: float = None, fmax: float = None, oversample_factor: float = 5.0,
+        self,
+        t,
+        y,
+        fmin: float = None,
+        fmax: float = None,
+        oversample_factor: float = 5.0,
     ) -> tuple:
         """Calculates the amplitude spectrum at a given time and flux input
 
@@ -222,7 +234,9 @@ class Balmung:
 
     def initialize_guess(self, fmin: float, fmax: float):
         time, flux = self.time, self.residual
-        f, a = self.amplitude_spectrum(time, flux, fmin=fmin, fmax=fmax, oversample_factor=5.0)
+        f, a = self.amplitude_spectrum(
+            time, flux, fmin=fmin, fmax=fmax, oversample_factor=5.0
+        )
 
         # Get freq of max power using parabolic interpolation
         f0 = self.find_highest_peak(f, a)
@@ -258,6 +272,5 @@ class Balmung:
         ax.set_xlabel("Frequency")
         ax.set_ylabel("Amplitude")
         rem = np.array(self.removed)
-        ax.plot(rem[:,0], rem[:,1], 'v', alpha=0.7)
+        ax.plot(rem[:, 0], rem[:, 1], "v", alpha=0.7)
         return ax
-

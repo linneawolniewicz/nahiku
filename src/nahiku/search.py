@@ -4,7 +4,7 @@ import warnings
 import numpy as np
 import matplotlib.pyplot as plt
 
-from gp_helpers import QuasiPeriodicKernel, ExactGPModel
+from .gp_helpers import QuasiPeriodicKernel, ExactGPModel
 
 from abc import abstractmethod
 from gpytorch.mlls import ExactMarginalLogLikelihood
@@ -12,6 +12,7 @@ from gpytorch.means import ConstantMean
 from gpytorch.likelihoods import GaussianLikelihood
 from gpytorch.kernels import PeriodicKernel, RBFKernel, ScaleKernel
 from gpytorch.constraints import Interval, GreaterThan
+
 
 class Search:
     """
@@ -29,7 +30,7 @@ class Search:
     ):
         """
         Build the Search object with x, y, and optional parameters for GP modeling.
-        
+
         :param x (np.ndarray): x array of the light curve
         :param y (np.ndarray): y array of the light curve
         :param dominant_period (float): dominant period of the light curve
@@ -57,20 +58,29 @@ class Search:
         Build the constraints for the GP model parameters.
         """
         # Initialize likelihood noise, kernel outputscale, and mean constant constraints
-        self.likelihood_noise_constraint = GreaterThan(lower_bound=1e-4, initial_value=0.5)
-        self.outputscale_constraint = Interval(lower_bound=0, upper_bound=5, initial_value=1)
-        self.mean_constant_constraint = Interval(lower_bound=-1, upper_bound=1, initial_value=0.01)
+        self.likelihood_noise_constraint = GreaterThan(
+            lower_bound=1e-4, initial_value=0.5
+        )
+        self.outputscale_constraint = Interval(
+            lower_bound=0, upper_bound=5, initial_value=1
+        )
+        self.mean_constant_constraint = Interval(
+            lower_bound=-1, upper_bound=1, initial_value=0.01
+        )
 
-        # Initialize constraints on the period, periodic lengthscale, and RBF lengthscale based on the dominant period of the time series                            
+        # Initialize constraints on the period, periodic lengthscale, and RBF lengthscale based on the dominant period of the time series
         if self.dominant_period <= 0.5:
             self.period_length_constraint = Interval(
-                lower_bound=max(0 + 1e-3, self.dominant_period - 0.1), upper_bound=2, initial_value=self.dominant_period
+                lower_bound=max(0 + 1e-3, self.dominant_period - 0.1),
+                upper_bound=2,
+                initial_value=self.dominant_period,
             )
             self.periodic_lengthscale_constraint = GreaterThan(
-                lower_bound=self.dominant_period/4, initial_value=self.dominant_period
+                lower_bound=self.dominant_period / 4, initial_value=self.dominant_period
             )
             self.rbf_lengthscale_constraint = GreaterThan(
-                lower_bound=self.dominant_period/4, initial_value=self.dominant_period * 4
+                lower_bound=self.dominant_period / 4,
+                initial_value=self.dominant_period * 4,
             )
 
         elif self.dominant_period >= 0.5 and self.dominant_period < 1:
@@ -105,7 +115,8 @@ class Search:
                 lower_bound=0.4, initial_value=self.dominant_period / 4
             )
             self.rbf_lengthscale_constraint = GreaterThan(
-                lower_bound=self.dominant_period / 3, initial_value=self.dominant_period * 1.5
+                lower_bound=self.dominant_period / 3,
+                initial_value=self.dominant_period * 1.5,
             )
 
         else:
@@ -114,11 +125,13 @@ class Search:
                 upper_bound=self.dominant_period + 2,
                 initial_value=self.dominant_period,
             )
-            self.periodic_lengthscale_constraint = GreaterThan(lower_bound=0.4, initial_value=2)
+            self.periodic_lengthscale_constraint = GreaterThan(
+                lower_bound=0.4, initial_value=2
+            )
             self.rbf_lengthscale_constraint = GreaterThan(
                 lower_bound=self.dominant_period / 4, initial_value=self.dominant_period
             )
-        
+
         pass
 
     def plot(self):
@@ -127,16 +140,25 @@ class Search:
         """
 
         fig, axs = plt.subplots(1, 2, sharex=True, figsize=(16, 5))
-        
+
         # First plot: timeseries with anomalies in red
         axs[0].plot(self.x, self.y, ".k", markersize=3, alpha=0.5, label="Observed")
-        axs[0].plot(self.x[self.flagged_anomalous], self.y[self.flagged_anomalous], ".r", markersize=5, alpha=0.7, label="Flagged Anomalies")
+        axs[0].plot(
+            self.x[self.flagged_anomalous],
+            self.y[self.flagged_anomalous],
+            ".r",
+            markersize=5,
+            alpha=0.7,
+            label="Flagged Anomalies",
+        )
         axs[0].set_xlabel("Time")
         axs[0].set_ylabel("Flux")
         axs[0].legend()
 
         # Second plot: timeseries colored according to anomalous_signal with a colorbar
-        scatter = axs[1].scatter(self.x, self.y, c=self.anomalous_signal, cmap='viridis', s=3)
+        scatter = axs[1].scatter(
+            self.x, self.y, c=self.anomalous_signal, cmap="viridis", s=3
+        )
         axs[1].set_xlabel("Time")
         axs[1].set_ylabel("Flux")
 
@@ -149,11 +171,10 @@ class Search:
         plt.tight_layout()
         plt.show()
 
-
     def build_kernel(self):
         """
         Build the kernel for the GP model based on the dominant period of the light curve.
-        Creates a Quasi-Periodic Kernel with constraints on the period length and lengthscales to guide the optimization process, 
+        Creates a Quasi-Periodic Kernel with constraints on the period length and lengthscales to guide the optimization process,
         and wraps it in a ScaleKernel to allow for scaling of the overall kernel output.
         """
 
@@ -163,17 +184,18 @@ class Search:
                 period_length_constraint=self.period_length_constraint,
                 lengthscale_constraint=self.periodic_lengthscale_constraint,
             ),
-            rbf_kernel=RBFKernel(lengthscale_constraint=self.rbf_lengthscale_constraint),
+            rbf_kernel=RBFKernel(
+                lengthscale_constraint=self.rbf_lengthscale_constraint
+            ),
         )
 
         # Wrap the kernel in a ScaleKernel to allow for scaling of the overall kernel output
         kernel = ScaleKernel(
-            qp_kernel, 
-            outputscale_constraint=self.outputscale_constraint
+            qp_kernel, outputscale_constraint=self.outputscale_constraint
         ).to(self.device)
 
         return kernel
-    
+
     def build_likelihood(self):
         """
         Build the likelihood for the GP model.
@@ -191,9 +213,11 @@ class Search:
         Build the mean function for the GP model.
         """
 
-        # Define mean function with a constraint on the constant value to prevent it from deviating too far from 0 during optimization 
+        # Define mean function with a constraint on the constant value to prevent it from deviating too far from 0 during optimization
         # (since data is assumed standardized)
-        mean = ConstantMean(constant_constraint=self.mean_constant_constraint).to(self.device)
+        mean = ConstantMean(constant_constraint=self.mean_constant_constraint).to(
+            self.device
+        )
 
         return mean
 
@@ -222,11 +246,11 @@ class Search:
         device = device if device is not None else self.device
 
         gp = ExactGPModel(
-            train_x=train_x, 
+            train_x=train_x,
             train_y=train_y,
             kernel=kernel,
             likelihood=likelihood,
-            mean=mean
+            mean=mean,
         ).to(device)
 
         return gp, likelihood, kernel, mean
@@ -269,21 +293,27 @@ class Search:
         x = x if x is not None else self.x
         y = y if y is not None else self.y
         device = device if device is not None else self.device
-    
+
         # Validate which_metric input
         if which_metric not in ["mll", "mse"]:
-            warnings.warn(f"Only 'mll' or 'mse' are supported values for which_metric, not {which_metric}. Choosing 'mll' by default.")
-        
+            warnings.warn(
+                f"Only 'mll' or 'mse' are supported values for which_metric, not {which_metric}. Choosing 'mll' by default."
+            )
+
         # Set minimum iterations for early stopping if not provided
         if early_stopping and (min_iterations is None):
             min_iterations = training_iterations // 10
             print(f"Using {min_iterations} as minimum iterations for early stopping.")
         elif not early_stopping and min_iterations is not None:
-            warnings.warn("min_iterations is set but early_stopping is False, so min_iterations will be ignored.")
+            warnings.warn(
+                "min_iterations is set but early_stopping is False, so min_iterations will be ignored."
+            )
 
         # Check training_iterations > 0
         if training_iterations <= 0:
-            warnings.warn(f"training_iterations {training_iterations} must be a positive integer. Setting to 1000 by default.")
+            warnings.warn(
+                f"training_iterations {training_iterations} must be a positive integer. Setting to 1000 by default."
+            )
             training_iterations = 1000
 
         # Set model and likelihood into training mode
@@ -296,7 +326,9 @@ class Search:
         elif which_opt == "sgd":
             optimizer = torch.optim.SGD(gp_model.parameters(), lr=lr)
         else:
-            warnings.warn("which_opt must be either 'adam' or 'sgd'. Defaulting to 'adam'.")
+            warnings.warn(
+                "which_opt must be either 'adam' or 'sgd'. Defaulting to 'adam'."
+            )
             optimizer = torch.optim.Adam(gp_model.parameters(), lr=lr)
 
         # Set up the marginal log likelihood for optimization
@@ -340,7 +372,7 @@ class Search:
 
             # Save losses
             train_losses.append(train_loss.item())
-        
+
         # Compute final log likelihood value
         log_likelihood_value = mll(pred, y).item()
 
@@ -360,7 +392,9 @@ class Search:
 
             likelihood.noise = torch.tensor(calc_variance).to(device)
             likelihood.noise_covar.noise = torch.tensor(calc_variance).to(device)
-            print(f"Setting learned noise variance {old_noise:.3f} to residual variance: {calc_variance:.3f}; likelihood noise variance = {likelihood.noise_covar.noise.item():.3f}")
+            print(
+                f"Setting learned noise variance {old_noise:.3f} to residual variance: {calc_variance:.3f}; likelihood noise variance = {likelihood.noise_covar.noise.item():.3f}"
+            )
 
         if plot:
             # Plot the train loss
@@ -381,7 +415,9 @@ class Search:
                     torch.tensor(x).to(device)
                 ).evaluate()
 
-                cov_matrix = gp_model.covar_module(torch.tensor(x).to(device)).evaluate()
+                cov_matrix = gp_model.covar_module(
+                    torch.tensor(x).to(device)
+                ).evaluate()
 
             plt.subplot(1, 4, 2)
             plt.title("Covariance Matrix")
@@ -399,12 +435,8 @@ class Search:
             plt.colorbar()
 
         return gp_model, likelihood, log_likelihood_value
-        
+
     @abstractmethod
     def search_for_anomaly(self):
         """All subclasses must implement this method."""
         pass
-
-
-
-    
