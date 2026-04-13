@@ -4,11 +4,13 @@ import gpytorch
 import pytest
 from nahiku.search import Search
 
+
 # Search is an abstract class with abstractmethod search_for_anomaly
 # We need a concrete implementation to test the base class methods
 class ConcreteSearch(Search):
     def search_for_anomaly(self, **kwargs):
         pass
+
 
 def test_search_init():
     x = np.linspace(0, 10, 50)
@@ -18,6 +20,7 @@ def test_search_init():
     assert isinstance(s.x_tensor, torch.Tensor)
     assert s.x_tensor.shape == (50,)
 
+
 def test_search_build_gp_model():
     x = np.linspace(0, 10, 20)
     y = np.sin(x)
@@ -25,6 +28,7 @@ def test_search_build_gp_model():
     model, likelihood, kernel, mean = s.build_gp_model()
     assert isinstance(model, gpytorch.models.ExactGP)
     assert isinstance(likelihood, gpytorch.likelihoods.GaussianLikelihood)
+
 
 def test_search_train_gp():
     x = np.linspace(0, 5, 20)
@@ -34,11 +38,16 @@ def test_search_train_gp():
     tx = torch.tensor(x).float().unsqueeze(-1)
     ty = torch.tensor(y).float()
     # Test a very short training run
-    model, likelihood, mll = s.train_gp(model, likelihood, x=tx, y=ty, training_iterations=2, early_stopping=False)
+    model, likelihood, mll = s.train_gp(
+        model, likelihood, x=tx, y=ty, training_iterations=2, early_stopping=False
+    )
     assert mll is not None
-    
+
     # Test early stopping branch
-    s.train_gp(model, likelihood, x=tx, y=ty, training_iterations=10, early_stopping=True)
+    s.train_gp(
+        model, likelihood, x=tx, y=ty, training_iterations=10, early_stopping=True
+    )
+
 
 def test_search_constraints():
     # Test different dominant periods to trigger different constraint logic in __init__

@@ -1,6 +1,6 @@
 [project]
 name = "nahiku"
-version = "0.1.1"
+version = "0.1.2"
 description = "A package for dipper detection in lightcurves"
 readme = "README.md"
 authors = [

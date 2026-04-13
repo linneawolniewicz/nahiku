@@ -146,7 +146,9 @@ class Search:
         y_to_plot = getattr(self, "y_orig", self.y)
 
         # First plot: timeseries with anomalies in red
-        axs[0].plot(x_to_plot, y_to_plot, ".k", markersize=3, alpha=0.5, label="Observed")
+        axs[0].plot(
+            x_to_plot, y_to_plot, ".k", markersize=3, alpha=0.5, label="Observed"
+        )
         axs[0].plot(
             x_to_plot[self.flagged_anomalous],
             y_to_plot[self.flagged_anomalous],
