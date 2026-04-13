@@ -25,3 +25,12 @@ def test_balmung_model():
     model_y = b.model(t, 1.0, 1.0, 0.0)
     assert len(model_y) == 3
     assert np.allclose(model_y, np.cos(2 * np.pi * 1.0 * t))
+
+def test_balmung_negative_amp():
+    t = np.linspace(0, 10, 100)
+    y = np.sin(t)
+    bm = Balmung(t, y)
+    # Use an initial guess with negative amplitude to trigger branch in fit()
+    # theta = [freq, amp, phase]
+    res = bm.fit([1.0/(2*np.pi), -1.0, 0.0])
+    assert res[1] > 0

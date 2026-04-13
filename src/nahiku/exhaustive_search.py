@@ -171,6 +171,10 @@ class ExhaustiveSearch(Search):
         init_mean = self.build_mean()
         init_likelihood = self.build_likelihood()
 
+        # Pop min_anomaly_len and max_anomaly_len from kwargs if they are there, because they are not needed for train_gp
+        kwargs.pop("min_anomaly_len", None)
+        kwargs.pop("max_anomaly_len", None)
+
         # If not refitting at each iteration, fit the GP to the entire data once and save the kernel parameters
         if not refit:
             # Build GP model on full x and y data

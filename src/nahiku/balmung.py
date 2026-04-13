@@ -163,7 +163,7 @@ class Balmung:
 
         # Determine the frequency value by parabolic interpolation
         if imax == 0 or imax == p.size - 1:
-            nu_peak = p[imax]
+            nu_peak = nu[imax]
         else:
             # Get values around the maximum. This is kinda gross
             frq1 = nu[imax - 1]

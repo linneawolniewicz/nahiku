@@ -529,11 +529,15 @@ class Nahiku:
             )
             smooth_power = gaussian_filter1d(power, 2)
             slope = np.gradient(smooth_power, freqs)
-            shoulder_idx = np.where(slope < 0)[0][0]
-            dominant_period = min(
-                self.freq_idx_to_period_days(freqs[shoulder_idx], self.time),
-                self.time[-1],
-            )
+            shoulder_indices = np.where(slope < 0)[0]
+            if len(shoulder_indices) > 0:
+                shoulder_idx = shoulder_indices[0]
+                dominant_period = min(
+                    self.freq_idx_to_period_days(freqs[shoulder_idx], self.time),
+                    self.time[-1],
+                )
+            else:
+                dominant_period = self.time[-1] - self.time[0]
 
         else:
             # Filter to most prominent peak

@@ -84,6 +84,9 @@ class GreedySearch(Search):
         else:
             self.len_deviant = len_deviant
 
+        # Initialize threshold to None or zeros
+        self.threshold = np.zeros_like(self.x)
+
     def plot_greedy(self, x, pred_mean, left_edge, right_edge, residuals):
         """
         Plot the light curve, GP fit, and detected anomalies at each iteration of the greedy search.
@@ -101,7 +104,7 @@ class GreedySearch(Search):
         # Plot the GP mean prediction vs. data
         axs[0].axvspan(
             self.x[left_edge],
-            self.x[right_edge],
+            self.x[min(right_edge, len(self.x) - 1)],
             color="green",
             alpha=0.4,
             label="New Flagged Anomaly",

@@ -141,11 +141,15 @@ class Search:
 
         fig, axs = plt.subplots(1, 2, sharex=True, figsize=(16, 5))
 
+        # Use original data if available (for GreedySearch), otherwise use current x, y
+        x_to_plot = getattr(self, "x_orig", self.x)
+        y_to_plot = getattr(self, "y_orig", self.y)
+
         # First plot: timeseries with anomalies in red
-        axs[0].plot(self.x, self.y, ".k", markersize=3, alpha=0.5, label="Observed")
+        axs[0].plot(x_to_plot, y_to_plot, ".k", markersize=3, alpha=0.5, label="Observed")
         axs[0].plot(
-            self.x[self.flagged_anomalous],
-            self.y[self.flagged_anomalous],
+            x_to_plot[self.flagged_anomalous],
+            y_to_plot[self.flagged_anomalous],
             ".r",
             markersize=5,
             alpha=0.7,
@@ -157,7 +161,7 @@ class Search:
 
         # Second plot: timeseries colored according to anomalous_signal with a colorbar
         scatter = axs[1].scatter(
-            self.x, self.y, c=self.anomalous_signal, cmap="viridis", s=3
+            x_to_plot, y_to_plot, c=self.anomalous_signal, cmap="viridis", s=3
         )
         axs[1].set_xlabel("Time")
         axs[1].set_ylabel("Flux")
