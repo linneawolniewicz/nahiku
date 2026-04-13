@@ -50,7 +50,7 @@ nahiku.plot()
 
 ## Documentation
 
-Full documentation, including API references and examples, can be found at: [https://nahiku.readthedocs.io/](https://nahiku.readthedocs.io/) (once hosted).
+Full documentation, including API references and examples, can be found at: [https://nahiku.readthedocs.io/](https://nahiku.readthedocs.io/).
 
 ## License
 
