@@ -40,15 +40,16 @@ class GreedySearch(Search):
         """
         Initialize the GreedySearch class and the base Search class with the provided parameters.
 
-        :param x (np.ndarray): x array of the light curve
-        :param y (np.ndarray): y array of the light curve
-        :param dominant_period (float): dominant period of the light curve
-        :param device (str): device to use for GP modeling (default: "cpu")
-        :param which_grow_metric (str): Metric to use for evaluating improvement when expanding the anomalous region. Options are 'nlpd', 'msll', 'rmse', 'mll'. Default is 'mll'.
-        :param y_err (np.ndarray or None): 1D array of observational errors. If None, assumes zero error for all points.
-        :param num_sigma_threshold (float): Threshold in terms of standard deviations for identifying anomalies. Default is 3.
-        :param expansion_param (int): Number of indices to expand the anomalous region on each side during the greedy search. Default is 1.
-        :param len_deviant (int): Length of the interval to consider for identifying the most significant outlier. Default is 1.
+        Args:
+            x (np.ndarray): x array of the light curve
+            y (np.ndarray): y array of the light curve
+            dominant_period (float): dominant period of the light curve
+            device (str): device to use for GP modeling (default: "cpu")
+            which_grow_metric (str): Metric to use for evaluating improvement when expanding the anomalous region. Options are 'nlpd', 'msll', 'rmse', 'mll'. Default is 'mll'.
+            y_err (np.ndarray or None): 1D array of observational errors. If None, assumes zero error for all points.
+            num_sigma_threshold (float): Threshold in terms of standard deviations for identifying anomalies. Default is 3.
+            expansion_param (int): Number of indices to expand the anomalous region on each side during the greedy search. Default is 1.
+            len_deviant (int): Length of the interval to consider for identifying the most significant outlier. Default is 1.
         """
 
         # Initialize the Base Search class
@@ -91,12 +92,13 @@ class GreedySearch(Search):
         """
         Plot the light curve, GP fit, and detected anomalies at each iteration of the greedy search.
 
-        :param x (torch.Tensor): x values used for GP prediction at the current iteration. Only needed to plot against pred_mean
+        Args:
+            x (torch.Tensor): x values used for GP prediction at the current iteration. Only needed to plot against pred_mean
                 Every other plotting call will use self.x or self.x_orig
-        :param pred_mean (np.ndarray): Array of the GP mean predictions corresponding to self.x at the current iteration
-        :param left_edge (int): Left edge index of the currently flagged anomalous region
-        :param right_edge (int): Right edge index of the currently flagged anomalous region
-        :param residuals (np.ndarray): Array of residuals (absolute value of observed - predicted) for the current iteration
+            pred_mean (np.ndarray): Array of the GP mean predictions corresponding to self.x at the current iteration
+            left_edge (int): Left edge index of the currently flagged anomalous region
+            right_edge (int): Right edge index of the currently flagged anomalous region
+            residuals (np.ndarray): Array of residuals (absolute value of observed - predicted) for the current iteration
         """
 
         fig, axs = plt.subplots(2, 1, sharex=True, figsize=(8, 8))
@@ -191,13 +193,16 @@ class GreedySearch(Search):
         """
         Main function to perform the greedy search for anomalies in the time series data.
 
-        :param refit (bool): Whether to refit the GP model at each iteration of the greedy search (default: True)
-        :param neg_anomaly_only (bool): Whether to only flag negative anomalies (i.e., dips) instead of both positive and negative anomalies (default: False)
-        :param pos_anomaly_only (bool): Whether to only flag positive anomalies (i.e., flares) instead of both positive and negative anomalies (default: False)
-        :param plot (bool): Whether to the light curve, GP fit, and detected anomalies at each iteration of the greedy search (default: False)
-        :param detection_range (tuple or None): Tuple specifying the range of x values to consider for anomaly detection. If None, considers the entire range of x. Default is None.
-        :param update_threshold (bool): Whether to update the num_sigma_threshold after each detected anomaly
-        :param kwargs: Additional keyword arguments to pass to the GP training function, such as training_iterations, lr, early_stopping, etc.
+        Args:
+            refit (bool): Whether to refit the GP model at each iteration of the greedy search (default: True)
+            neg_anomaly_only (bool): Whether to only flag negative anomalies (i.e., dips) instead of both positive and negative anomalies (default: False)
+            pos_anomaly_only (bool): Whether to only flag positive anomalies (i.e., flares) instead of both positive and negative anomalies (default: False)
+            plot (bool): Whether to the light curve, GP fit, and detected anomalies at each iteration of the greedy search (default: False)
+            detection_range (tuple or None): Tuple specifying the range of x values to consider for anomaly detection. If None, considers the entire range of x. Default is None.
+            update_threshold (bool): Whether to update the num_sigma_threshold after each detected anomaly
+        
+        Args:
+            kwargs: Additional keyword arguments to pass to the GP training function, such as training_iterations, lr, early_stopping, etc.
 
         """
         start_time = time.time()

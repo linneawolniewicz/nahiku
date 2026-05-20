@@ -14,8 +14,9 @@ class QuasiPeriodicKernel(Kernel):
         """
         Initialize the QuasiPeriodicKernel with optional periodic and RBF kernels.
 
-        :param periodic_kernel (GPyTorch.kernel object): An instance of a periodic kernel (optional)
-        :param rbf_kernel (GPyTorch.kernel object): An instance of an RBF kernel (optional)
+        Args:
+            periodic_kernel (GPyTorch.kernel object): An instance of a periodic kernel (optional)
+            rbf_kernel (GPyTorch.kernel object): An instance of an RBF kernel (optional)
         """
 
         super(QuasiPeriodicKernel, self).__init__(**kwargs)
@@ -36,9 +37,10 @@ class QuasiPeriodicKernel(Kernel):
         """
         Compute the kernel value between two sets of inputs by combining the periodic and RBF kernels.
 
-        :param x1 (torch.Tensor): First set of input points
-        :param x2 (torch.Tensor): Second set of input points
-        :param diag (bool): Whether to compute only diagonal elements
+        Args:
+            x1 (torch.Tensor): First set of input points
+            x2 (torch.Tensor): Second set of input points
+            diag (bool): Whether to compute only diagonal elements
         """
         periodic_part = self.periodic_kernel.forward(x1, x2, diag=diag, **params)
         rbf_part = self.rbf_kernel.forward(x1, x2, diag=diag, **params)
@@ -56,11 +58,12 @@ class ExactGPModel(gpytorch.models.ExactGP):
         """
         Initialize the ExactGPModel with training data, likelihood, kernel, and mean function.
 
-        :param train_x (torch.Tensor): Training input data
-        :param train_y (torch.Tensor): Training target data
-        :param likelihood (GPyTorch.likelihood object): Likelihood function for the GP model
-        :param kernel (GPyTorch.kernel object): Kernel function for the GP model
-        :param mean (GPyTorch.mean object): Mean function for the GP model
+        Args:
+            train_x (torch.Tensor): Training input data
+            train_y (torch.Tensor): Training target data
+            likelihood (GPyTorch.likelihood object): Likelihood function for the GP model
+            kernel (GPyTorch.kernel object): Kernel function for the GP model
+            mean (GPyTorch.mean object): Mean function for the GP model
         """
 
         super(ExactGPModel, self).__init__(train_x, train_y, likelihood)
@@ -72,7 +75,8 @@ class ExactGPModel(gpytorch.models.ExactGP):
         """
         Compute the forward pass of the ExactGPModel.
 
-        :param x (torch.Tensor): Input data points
+        Args:
+            x (torch.Tensor): Input data points
         """
 
         mean_x = self.mean_module(x)
@@ -90,8 +94,9 @@ class ParameterizedGPModel(gpytorch.models.GP):
         """
         Initialize the ParameterizedGPModel with a specified kernel and mean function.
 
-        :param kernel (GPyTorch.kernel object): Kernel function for the GP model
-        :param mean (GPyTorch.mean object): Mean function for the GP model
+        Args:
+            kernel (GPyTorch.kernel object): Kernel function for the GP model
+            mean (GPyTorch.mean object): Mean function for the GP model
         """
 
         super().__init__()
@@ -102,7 +107,8 @@ class ParameterizedGPModel(gpytorch.models.GP):
         """
         Compute the forward pass of the ParameterizedGPModel.
 
-        :param x (torch.Tensor): Input data points
+        Args:
+            x (torch.Tensor): Input data points
         """
 
         mean_x = self.mean_module(x)

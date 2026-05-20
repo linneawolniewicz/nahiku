@@ -30,12 +30,13 @@ class Nahiku:
         """
         Initialize a Nahiku object with time and flux arrays, and an optional anomalies dictionary to keep track of true, injected, and identified anomalies.
 
-        :param time (1D array-like): Array of time points corresponding to the light curve data.
-        :param flux (1D array-like): Array of flux values corresponding to the light curve data.
-        :param anomalies (dict): Dictionary to keep track of true, injected, and identified anomalies, with keys "true", "injected", and "identified".
+        Args:
+            time (1D array-like): Array of time points corresponding to the light curve data.
+            flux (1D array-like): Array of flux values corresponding to the light curve data.
+            anomalies (dict): Dictionary to keep track of true, injected, and identified anomalies, with keys "true", "injected", and "identified".
                 Each key should map to a list of indices corresponding to the anomalies in the time and flux arrays (default: {"true": [], "injected": [], "identified": []}).
-        :param prominence (int): minimum prominence of peaks to consider in the periodogram for calculating the dominant period (default: 50)
-        :param plot_dominant_period (bool): whether to plot the periodogram and light curve with the dominant period sinusoid when calculating the dominant period (default: False)
+            prominence (int): minimum prominence of peaks to consider in the periodogram for calculating the dominant period (default: 50)
+            plot_dominant_period (bool): whether to plot the periodogram and light curve with the dominant period sinusoid when calculating the dominant period (default: False)
         """
 
         self.time = time
@@ -58,7 +59,8 @@ class Nahiku:
         Load a light curve using the lightkurve.search_lightcurve function, with options to specify various parameters for the search.
         Documentation for lightkurve.search_lightcurve parameters can be found here: https://lightkurve.github.io/lightkurve/reference/api/lightkurve.search_lightcurve.html
 
-        :param kwargs: Additional keyword arguments to pass to lightkurve.search_lightcurve and Nahiku.__init__
+        Args:
+            kwargs: Additional keyword arguments to pass to lightkurve.search_lightcurve and Nahiku.__init__
         """
         # Create a dict of init args, falling back to defaults if not in kwargs
         init_keys = ["anomalies", "prominence", "plot_dominant_period"]
@@ -93,18 +95,21 @@ class Nahiku:
         """
         Generate a synthetic light curve with a sinusoidal signal, white noise, red noise, a step function anomaly, and a linear trend.
 
-        :param num_days (float): total duration of the light curve in days (default: 100)
-        :param num_steps (int): number of time steps in the light curve (default: 1000)
-        :param seed (int): random seed for reproducibility (default: 48)
-        :param rednoise_amp (float): amplitude of red noise (default: 1.0)
-        :param whitenoise_amp (float): amplitude of white noise (default: 1.0)
-        :param period (float): period of the sinusoidal signal (default: randomly chosen between 175 and 225)
-        :param phase (float): phase of the sinusoidal signal (default: randomly chosen between 0 and 2*pi)
-        :param amp (float): amplitude of the sinusoidal signal (default: randomly chosen between 0 and 0.9)
-        :param slope (float): slope of the linear trend (default: randomly chosen between -0.001 and 0.001)
-        :param rednoise_time_scale (float): correlation time scale of the red noise (default: randomly chosen between 5 and 15)
-        :param random_noise_step_loc (float): location of the step function anomaly (default: randomly chosen between 0 and num_steps)
-        :param kwargs: Additional keyword arguments to pass to Nahiku.__init__
+        Args:
+            num_days (float): total duration of the light curve in days (default: 100)
+            num_steps (int): number of time steps in the light curve (default: 1000)
+            seed (int): random seed for reproducibility (default: 48)
+            rednoise_amp (float): amplitude of red noise (default: 1.0)
+            whitenoise_amp (float): amplitude of white noise (default: 1.0)
+            period (float): period of the sinusoidal signal (default: randomly chosen between 175 and 225)
+            phase (float): phase of the sinusoidal signal (default: randomly chosen between 0 and 2*pi)
+            amp (float): amplitude of the sinusoidal signal (default: randomly chosen between 0 and 0.9)
+            slope (float): slope of the linear trend (default: randomly chosen between -0.001 and 0.001)
+            rednoise_time_scale (float): correlation time scale of the red noise (default: randomly chosen between 5 and 15)
+            random_noise_step_loc (float): location of the step function anomaly (default: randomly chosen between 0 and num_steps)
+        
+        Args:
+            kwargs: Additional keyword arguments to pass to Nahiku.__init__
         """
 
         if num_steps < 0:
@@ -196,30 +201,33 @@ class Nahiku:
         Sample a function from a Gaussian Process with a scaled quasi-periodic kernel, constant mean, and Gaussian likelihood,
         with options to specify various parameters for the kernel, mean function, likelihood noise, and number high residuals to add in.
 
-        :param num_days (float): total duration of the light curve in days (default: 100)
-        :param num_steps (int): number of time steps in the light curve (default: 1000)
-        :param seed (int): random seed for reproducibility (default: 48)
-        :param add_high_residuals (bool): whether to add high residuals to the sampled function to create more challenging anomalies (default: False)
-        :param device (str): device to use for GP sampling, either "cpu" or "cuda" (default: "cpu")
-        :param mean_constant (float or None): constant value for the mean function.
+        Args:
+            num_days (float): total duration of the light curve in days (default: 100)
+            num_steps (int): number of time steps in the light curve (default: 1000)
+            seed (int): random seed for reproducibility (default: 48)
+            add_high_residuals (bool): whether to add high residuals to the sampled function to create more challenging anomalies (default: False)
+            device (str): device to use for GP sampling, either "cpu" or "cuda" (default: "cpu")
+            mean_constant (float or None): constant value for the mean function.
                 If not provided, randomly chosen between -1 and 1 (Optional)
-        :param outputscale (float or None): output scale for the scaled quasi-periodic kernel.
+            outputscale (float or None): output scale for the scaled quasi-periodic kernel.
                 If not provided, randomly chosen between 0.1 and 10 (Optional)
-        :param periodic_lengthscale (float or None): length scale for the periodic component of the quasi-periodic kernel.
+            periodic_lengthscale (float or None): length scale for the periodic component of the quasi-periodic kernel.
                 If not provided, randomly chosen between 0.5 and num_days/4 (Optional)
-        :param period (float or None): period for the periodic component of the quasi-periodic kernel.
+            period (float or None): period for the periodic component of the quasi-periodic kernel.
                 If not provided, randomly chosen between 0.5 and num_days (Optional)
-        :param rbf_lengthscale (float or None): length scale for the RBF component of the quasi-periodic kernel.
+            rbf_lengthscale (float or None): length scale for the RBF component of the quasi-periodic kernel.
                 If not provided, randomly chosen between 0.5 and num_days/2 (Optional)
-        :param noise_std (float or None): standard deviation of the Gaussian noise to add to the sampled function.
+            noise_std (float or None): standard deviation of the Gaussian noise to add to the sampled function.
                 If not provided, randomly chosen between 0.1 and 1 (Optional)
-        :param num_high_residuals (int or None): number of high residuals to add to the sampled function if add_high_residuals is True.
+            num_high_residuals (int or None): number of high residuals to add to the sampled function if add_high_residuals is True.
                 If not provided, randomly chosen between 5 and 25 (Optional)
-        :param mean_high_residuals (float or None): mean of the Gaussian distribution to sample the high residuals from if add_high_residuals is True.
+            mean_high_residuals (float or None): mean of the Gaussian distribution to sample the high residuals from if add_high_residuals is True.
                 If not provided, randomly chosen between -1 and 1 (Optional)
-        :param var_high_residuals (float or None): variance of the Gaussian distribution to sample the high residuals from if add_high_residuals is True.
+            var_high_residuals (float or None): variance of the Gaussian distribution to sample the high residuals from if add_high_residuals is True.
                 If not provided, randomly chosen between 0.1 and 10 (Optional)
-        :param kwargs: Additional keyword arguments to pass to Nahiku.__init__
+        
+        Args:
+            kwargs: Additional keyword arguments to pass to Nahiku.__init__
         """
 
         rng = np.random.default_rng(seed=seed)
@@ -390,7 +398,8 @@ class Nahiku:
         Plot the light curve with shaded regions for injected/true anomalies
         and optional red x's for identified anomalies.
 
-        :param show_identified_points (bool): whether to plot the identified anomalous points as red x's (default: True)
+        Args:
+            show_identified_points (bool): whether to plot the identified anomalous points as red x's (default: True)
         """
         plt.figure(figsize=(10, 5))
 
@@ -460,8 +469,11 @@ class Nahiku:
         Prewhiten a light curve using the balmung.prewhiten function, with options to specify various parameters for the removal of frequencies.
         Code for balmung.prewhiten can be found here: https://github.com/danhey/balmung/blob/master/balmung/balmung.py
 
-        :param plot (bool): whether to plot the light curve before and after prewhitening (default: True)
-        :param kwargs: Additional keyword arguments to pass to balmung.prewhiten and Nahiku.__init__
+        Args:
+            plot (bool): whether to plot the light curve before and after prewhitening (default: True)
+        
+        Args:
+            kwargs: Additional keyword arguments to pass to balmung.prewhiten and Nahiku.__init__
         """
         # Create a dict of init args, falling back to defaults if not in kwargs
         init_keys = ["anomalies", "prominence", "plot_dominant_period"]
@@ -494,8 +506,9 @@ class Nahiku:
         """
         Function to convert frequency indices from a periodogram to periods in days, using the time points of the original data to calculate the scaling factor for the conversion.
 
-        :param freqs_idx (1D array-like): Array of frequency indices to convert to periods in days.
-        :param times (1D array-like): Array of time points corresponding to the original data, used to calculate the scaling factor for converting frequency indices to periods in days.
+        Args:
+            freqs_idx (1D array-like): Array of frequency indices to convert to periods in days.
+            times (1D array-like): Array of time points corresponding to the original data, used to calculate the scaling factor for converting frequency indices to periods in days.
         """
         idx_day_scale_factor = (times[-1] - times[0]) / len(times)
         periods = 1 / freqs_idx
@@ -508,8 +521,9 @@ class Nahiku:
         Function to calculate the dominant period of a light curve using the periodogram and peak detection.
         It also includes an option to plot the periodogram and the light curve with the dominant period sinusoid.
 
-        :param prominence (int): minimum prominence of peaks to consider in the periodogram (default: 50)
-        :param plot (bool): whether to plot the periodogram and light curve (default: False)
+        Args:
+            prominence (int): minimum prominence of peaks to consider in the periodogram (default: 50)
+            plot (bool): whether to plot the periodogram and light curve (default: False)
         """
 
         # Check if data is standardized
@@ -637,17 +651,18 @@ class Nahiku:
         """
         Inject an anomaly into the light curve, with options to specify the number of anomalies, their shapes, widths, depths, and locations.
 
-        :param num_anomalies (int): number of anomalies to inject
-        :param absolute_width (float or None): absolute width of the anomaly. If specified, period_scale is ignored (default: None)
-        :param absolute_depth (float or None): absolute depth of the anomaly. If specified, snr is ignored (default: None)
-        :param idxs (list of float or None): list of indices to inject anomalies at. If None, indices are randomly chosen (default: None)
-        :param seed (int): random seed for reproducibility (default: 48)
-        :param shapes (list of str): list of shapes to choose from for the anomalies.
+        Args:
+            num_anomalies (int): number of anomalies to inject
+            absolute_width (float or None): absolute width of the anomaly. If specified, period_scale is ignored (default: None)
+            absolute_depth (float or None): absolute depth of the anomaly. If specified, snr is ignored (default: None)
+            idxs (list of float or None): list of indices to inject anomalies at. If None, indices are randomly chosen (default: None)
+            seed (int): random seed for reproducibility (default: 48)
+            shapes (list of str): list of shapes to choose from for the anomalies.
                 Options are "gaussian" for gaussian-shaped anomalies, "saw" for sawtooth-shaped anomalies, and "exocomet" for exocomet-shaped anomalies.
                 Default is ["gaussian", "saw", "exocomet"].
-        :param period_scale (float or None): ratio of the dominant period to use as the width of the anomaly. If None, randomly chosen between 0.1 and 5 (default: None)
-        :param snr (float or None): signal to noise ratio of the anomaly. If None, randomly chosen between 0.5 and 10 (default: None)
-        :param alpha (float): shape parameter for the exocomet profile, which controls the asymmetry of the anomaly.
+            period_scale (float or None): ratio of the dominant period to use as the width of the anomaly. If None, randomly chosen between 0.1 and 5 (default: None)
+            snr (float or None): signal to noise ratio of the anomaly. If None, randomly chosen between 0.5 and 10 (default: None)
+            alpha (float): shape parameter for the exocomet profile, which controls the asymmetry of the anomaly.
                 Higher values of alpha result in a more asymmetric profile with a steeper ingress and a shallower egress (default: 1)
         """
 
@@ -824,7 +839,8 @@ class Nahiku:
         """
         Helper to turn a list of indices into a list of (start, end) tuples.
 
-        :param indices (list of int): list of indices to group into events
+        Args:
+            indices (list of int): list of indices to group into events
         """
         if not indices:
             return []
@@ -846,7 +862,8 @@ class Nahiku:
         """
         Check the identified anomalies against the true and injected anomalies, and print out the results.
 
-        :param buffer (int): number of indices on either side of the true and injected anomaly indices to consider as a match for an identified anomaly (default: 5)
+        Args:
+            buffer (int): number of indices on either side of the true and injected anomaly indices to consider as a match for an identified anomaly (default: 5)
         """
         # Group indices into events
         true_events = self.get_events(self.anomalies["true"])

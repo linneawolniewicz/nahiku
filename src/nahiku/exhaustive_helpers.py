@@ -17,12 +17,13 @@ def precompute_precision(
     Build μ and J = (K + σ²I)^{-1} for the *full* X once.
     Use float64 here for numerical stability; you can cast later if desired.
 
-    :param full_x (torch.Tensor): (N, D) tensor of all input locations
-    :param mean_module (GPyTorch mean module): GPyTorch mean module that can be called on full_x
-    :param kernel_module (GPyTorch kernel module): GPyTorch kernel module that can be called on full_x to produce a LazyTensor covariance
-    :param noise_variance (float): observation noise variance σ²
-    :param dtype (torch.dtype): torch dtype for computations (default: torch.float64 for stability)
-    :param device (str): torch device for computations (default: "cpu")
+    Args:
+        full_x (torch.Tensor): (N, D) tensor of all input locations
+        mean_module (GPyTorch mean module): GPyTorch mean module that can be called on full_x
+        kernel_module (GPyTorch kernel module): GPyTorch kernel module that can be called on full_x to produce a LazyTensor covariance
+        noise_variance (float): observation noise variance σ²
+        dtype (torch.dtype): torch dtype for computations (default: torch.float64 for stability)
+        device (str): torch device for computations (default: "cpu")
     """
     X = full_x.to(device=device, dtype=dtype)
     N = X.shape[0]
@@ -53,12 +54,13 @@ def interval_posterior_from_precision(
     using the precision (inverse covariance) matrix and the prior mean. It leverages the block structure
     of the precision matrix to efficiently compute the conditional distribution.
 
-    :param mu (torch.Tensor): (N,) mean vector over the full grid
-    :param J (torch.Tensor): (N, N) precision matrix over the full grid, where J = (K + σ²I)^{-1}
-    :param full_y (torch.Tensor): (N,) output values on the full grid
-    :param mask_train (torch.Tensor or bool array): (N,) boolean mask indicating training data points
-    :param mask_test (torch.Tensor or bool array): (N,) boolean mask indicating test data points
-    :param dtype (torch.dtype): Data type for computations (default: torch.float64)
+    Args:
+        mu (torch.Tensor): (N,) mean vector over the full grid
+        J (torch.Tensor): (N, N) precision matrix over the full grid, where J = (K + σ²I)^{-1}
+        full_y (torch.Tensor): (N,) output values on the full grid
+        mask_train (torch.Tensor or bool array): (N,) boolean mask indicating training data points
+        mask_test (torch.Tensor or bool array): (N,) boolean mask indicating test data points
+        dtype (torch.dtype): Data type for computations (default: torch.float64)
     """
     device, dtype = mu.device, mu.dtype
     mask_train = torch.as_tensor(mask_train, device=device)
@@ -100,8 +102,9 @@ def compute_interval_pvalue(y_true, mvn_pred):
     if Cholesky fails (e.g., if the covariance is not positive definite). The p-value is computed based on the chi-squared distribution with degrees of freedom
     equal to the dimensionality of the data.
 
-    :param y_true (torch.Tensor): shape (d,)
-    :param mvn_pred (MultivariateNormal): MultivariateNormal from GPyTorch (mean: (d,), covar: (d,d))
+    Args:
+        y_true (torch.Tensor): shape (d,)
+        mvn_pred (MultivariateNormal): MultivariateNormal from GPyTorch (mean: (d,), covar: (d,d))
     """
     mean = mvn_pred.mean  # shape (d,)
     cov = mvn_pred.covariance_matrix  # shape (d, d)

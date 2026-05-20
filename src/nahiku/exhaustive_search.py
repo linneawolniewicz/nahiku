@@ -44,17 +44,18 @@ class ExhaustiveSearch(Search):
         """
         Initialize the ExhaustiveSearch class and the base Search class with the provided parameters.
 
-        :param x (np.ndarray): x array of the light curve
-        :param y (np.ndarray): y array of the light curve
-        :param dominant_period (float): dominant period of the light curve
-        :param device (str): device to use for GP modeling (default: "cpu")
-        :param min_anomaly_len (int): minimum length of candidate anomalous intervals (default: 1)
-        :param max_anomaly_len (int): maximum length of candidate anomalous intervals (default: 400)
-        :param window_slide_step (int): step size for sliding the window across the time series (default: 1)
-        :param window_size_step (int): step size for varying the size of the candidate intervals (default: 1)
-        :param assume_independent (bool): if True, assumes independence between points for speed. False is not yet implemented and will be ignored for now. (default: True)
-        :param which_test_metric (str): metric to use for evaluating the likelihood of test intervals.
-               Options are 'pval', 'mahalanobis', 'nlpd', 'msll', 'rmse', 'mll', or default is 'll' (log-likelihood)
+        Args:
+            x (np.ndarray): x array of the light curve
+            y (np.ndarray): y array of the light curve
+            dominant_period (float): dominant period of the light curve
+            device (str): device to use for GP modeling (default: "cpu")
+            min_anomaly_len (int): minimum length of candidate anomalous intervals (default: 1)
+            max_anomaly_len (int): maximum length of candidate anomalous intervals (default: 400)
+            window_slide_step (int): step size for sliding the window across the time series (default: 1)
+            window_size_step (int): step size for varying the size of the candidate intervals (default: 1)
+            assume_independent (bool): if True, assumes independence between points for speed. False is not yet implemented and will be ignored for now. (default: True)
+            which_test_metric (str): metric to use for evaluating the likelihood of test intervals.
+                Options are 'pval', 'mahalanobis', 'nlpd', 'msll', 'rmse', 'mll', or default is 'll' (log-likelihood)
         """
 
         # Initialize the Base Search class
@@ -113,16 +114,19 @@ class ExhaustiveSearch(Search):
         """
         Main function to perform the exhaustive search for anomalies in the time series data.
 
-        :param filename (str): If provided, saves the results to this file (default: "")
-        :param refit (bool): If true, refit the GP for each interval. If false, use the same GP for all intervals (faster but less accurate) (default: False)
-        :param neg_anomaly_only (bool): Whether to only flag negative anomalies (i.e., dips) instead of both positive and negative anomalies (default: False)
-        :param pos_anomaly_only (bool): Whether to only flag positive anomalies (i.e., flares) instead of both positive and negative anomalies (default: False)
-        :param dynamic_programming (bool): If true, use dynamic programming to find the best interval. Only works if refit = False (default: False)
-        :param threshold (float): Threshold for flagging an interval as anomalous based on the test metric (default: 1e-5)
-        :param num_intervals_to_flag (int or None): If not None, flag the top num_intervals_to_flag intervals as anomalous based on the test metric, instead of using a threshold (default: None)
-        :param silent (bool): If true, suppresses print statements during training (default: True)
-        :param plot (bool): If true, plots the GP prediction and p-value for each candidate interval (default: False)
-        :param kwargs: Additional keyword arguments to pass to the GP training function, such as training_iterations, lr, early_stopping, etc.
+        Args:
+            filename (str): If provided, saves the results to this file (default: "")
+            refit (bool): If true, refit the GP for each interval. If false, use the same GP for all intervals (faster but less accurate) (default: False)
+            neg_anomaly_only (bool): Whether to only flag negative anomalies (i.e., dips) instead of both positive and negative anomalies (default: False)
+            pos_anomaly_only (bool): Whether to only flag positive anomalies (i.e., flares) instead of both positive and negative anomalies (default: False)
+            dynamic_programming (bool): If true, use dynamic programming to find the best interval. Only works if refit = False (default: False)
+            threshold (float): Threshold for flagging an interval as anomalous based on the test metric (default: 1e-5)
+            num_intervals_to_flag (int or None): If not None, flag the top num_intervals_to_flag intervals as anomalous based on the test metric, instead of using a threshold (default: None)
+            silent (bool): If true, suppresses print statements during training (default: True)
+            plot (bool): If true, plots the GP prediction and p-value for each candidate interval (default: False)
+        
+        Args:
+            kwargs: Additional keyword arguments to pass to the GP training function, such as training_iterations, lr, early_stopping, etc.
 
         """
         start_time = time.time()

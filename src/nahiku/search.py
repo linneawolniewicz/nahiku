@@ -31,10 +31,11 @@ class Search:
         """
         Build the Search object with x, y, and optional parameters for GP modeling.
 
-        :param x (np.ndarray): x array of the light curve
-        :param y (np.ndarray): y array of the light curve
-        :param dominant_period (float): dominant period of the light curve
-        :param device (str): device to use for GP modeling (default: "cpu")
+        Args:
+            x (np.ndarray): x array of the light curve
+            y (np.ndarray): y array of the light curve
+            dominant_period (float): dominant period of the light curve
+            device (str): device to use for GP modeling (default: "cpu")
         """
 
         self.x = x
@@ -239,9 +240,10 @@ class Search:
         """
         Initialize an ExactGPModel with the defined kernel, likelihood, and mean function.
 
-        :param kernel (GPytorch.kernel object): kernel to use for the GP model (optional)
-        :param likelihood (GPytorch.likelihood object): likelihood to use for the GP model (optional)
-        :param mean (GPytorch.mean object): mean function to use for the GP model (optional)
+        Args:
+            kernel (GPytorch.kernel object): kernel to use for the GP model (optional)
+            likelihood (GPytorch.likelihood object): likelihood to use for the GP model (optional)
+            mean (GPytorch.mean object): mean function to use for the GP model (optional)
         """
 
         kernel = kernel if kernel is not None else self.build_kernel()
@@ -281,18 +283,19 @@ class Search:
         """
         Train the GP model using the specified parameters and return the trained model, likelihood, and final log likelihood value.
 
-        :param training_iterations (int): maximum number of training iterations (default: 1000)
-        :param lr (float): learning rate for the optimizer (default: 0.01)
-        :param which_metric (str): Metric to use for evaluating improvement during training. Options are 'mll' for marginal log likelihood and 'mse' for mean squared error. Default is 'mll'.
-        :param which_opt (str): Optimizer to use for training. Options are 'adam' and 'sgd'. Default is 'adam'.
-        :param early_stopping (bool): Whether to use early stopping based on the training loss (default: True)
-        :param min_iterations (int or None): Minimum number of iterations to train before considering early stopping (default: None, which sets it to training_iterations // 10)
-        :param patience (int): Number of consecutive iterations with increasing loss to wait before stopping when early_stopping is True (default: 1)
-        :param plot (bool): Whether to plot the training loss and covariance matrices after training (default: False)
-        :param set_noise_equal_to_var_residuals (bool): Whether to set the likelihood noise variance equal to the variance of the residuals after training (default: False)
-        :param x (torch.Tensor or None): Training input data (optional, defaults to self.x_tensor)
-        :param y (torch.Tensor or None): Training target data (optional, defaults to self.y_tensor)
-        :param device (str or None): Device to use for training (optional, defaults to self.device)
+        Args:
+            training_iterations (int): maximum number of training iterations (default: 1000)
+            lr (float): learning rate for the optimizer (default: 0.01)
+            which_metric (str): Metric to use for evaluating improvement during training. Options are 'mll' for marginal log likelihood and 'mse' for mean squared error. Default is 'mll'.
+            which_opt (str): Optimizer to use for training. Options are 'adam' and 'sgd'. Default is 'adam'.
+            early_stopping (bool): Whether to use early stopping based on the training loss (default: True)
+            min_iterations (int or None): Minimum number of iterations to train before considering early stopping (default: None, which sets it to training_iterations // 10)
+            patience (int): Number of consecutive iterations with increasing loss to wait before stopping when early_stopping is True (default: 1)
+            plot (bool): Whether to plot the training loss and covariance matrices after training (default: False)
+            set_noise_equal_to_var_residuals (bool): Whether to set the likelihood noise variance equal to the variance of the residuals after training (default: False)
+            x (torch.Tensor or None): Training input data (optional, defaults to self.x_tensor)
+            y (torch.Tensor or None): Training target data (optional, defaults to self.y_tensor)
+            device (str or None): Device to use for training (optional, defaults to self.device)
         """
 
         # Get training data and device if not provided
