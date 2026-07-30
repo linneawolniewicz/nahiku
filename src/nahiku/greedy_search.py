@@ -389,14 +389,14 @@ class GreedySearch(Search):
             # Remove left_edge:right_edge from x, y, and y_err for the next iteration of the greedy search
             # Handle case where left_edge = 0 or right_edge = len(self.x)
             self.x = np.delete(
-                self.x, np.arange(min(left_edge, 0), max(right_edge, len(self.x)))
+                self.x, np.arange(max(left_edge, 0), min(right_edge, len(self.x)))
             )
             self.y = np.delete(
-                self.y, np.arange(min(left_edge, 0), max(right_edge, len(self.y)))
+                self.y, np.arange(max(left_edge, 0), min(right_edge, len(self.y)))
             )
             self.y_err = np.delete(
                 self.y_err,
-                np.arange(min(left_edge, 0), max(right_edge, len(self.y_err))),
+                np.arange(max(left_edge, 0), min(right_edge, len(self.y_err))),
             )
 
             self.x_tensor = torch.tensor(self.x, dtype=torch.float32).to(self.device)
@@ -484,7 +484,7 @@ class GreedySearch(Search):
                 # Remove points between left_edge and right_edge from the threshold
                 self.threshold = np.delete(
                     self.threshold,
-                    np.arange(min(left_edge, 0), max(right_edge, len(self.threshold))),
+                    np.arange(max(left_edge, 0), min(right_edge, len(self.threshold))),
                 )
 
             # Compute the minimum value in each window of size len_deviant in the residuals array; check if there are still points above the threshold
