@@ -219,3 +219,6 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+# Generated notebook analysis outputs
+examples/outputs/
+docs/tutorials/outputs/

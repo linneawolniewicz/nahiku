@@ -1,0 +1,32 @@
+{
+  "target": "KIC 8462852",
+  "selection": {
+    "mission": "Kepler",
+    "author": "Kepler",
+    "exptime": 1800,
+    "quarter": 16
+  },
+  "data_uri": "mast:KEPLER/url/missions/kepler/lightcurves/0084/008462852/kplr008462852-2013098041711_llc.fits",
+  "product": "kplr008462852-2013098041711_llc.fits",
+  "sha256": "e3e9a9b247b0f01ec73f448e5d890905078777755c93063e78ed3ae47581c289",
+  "time_format": "bkjd",
+  "time_scale": "tdb",
+  "quality_bitmask": "default",
+  "flux_column": "PDCSAP_FLUX",
+  "source": "https://mast.stsci.edu/",
+  "n_points": 3540,
+  "time_min": 1472.1177793449679,
+  "time_max": 1557.958490156925,
+  "window_days": [
+    1507.0,
+    1530.0
+  ],
+  "normalization": 247215.65625,
+  "fixture": "tabbys_star.csv",
+  "fixture_sha256": "e480480d845cef073a24ec6ecaca99ede148515c2c475d38dcb9aeb89ae2b1a9",
+  "fixture_n_points": 1054,
+  "reference": "https://doi.org/10.1093/mnras/stw218",
+  "redistribution": "Small derived subset of publicly available NASA Kepler/TESS mission data; cite mission, MAST and original analysis.",
+  "retrieved_date": "2026-11-10",
+  "quality_integer_mask": 1130799
+}

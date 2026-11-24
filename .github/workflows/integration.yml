@@ -1,0 +1,30 @@
+name: Real-star integration
+on:
+  workflow_dispatch:
+jobs:
+  lightkurve-examples:
+    runs-on: ubuntu-latest
+    env:
+      OMP_NUM_THREADS: '1'
+      OPENBLAS_NUM_THREADS: '1'
+      MPLBACKEND: Agg
+      NAHIKU_OFFLINE: '0'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: |
+          python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install '.[data,test,docs]'
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/nahiku
+          key: nahiku-fixed-mast-products-v1
+      - run: python scripts/check_notebooks.py --real
+      - uses: actions/upload-artifact@v4
+        with:
+          name: executed-real-star-examples
+          path: |
+            examples/*.ipynb
+            examples/outputs

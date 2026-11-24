@@ -224,6 +224,20 @@ def test_noise_only_conservative_threshold():
     assert not lc.exhaustive_search(min_points=2, max_points=5, step=4, threshold=1e-12).mask.any()
 
 
+def test_fixture_checksums():
+    import hashlib
+    from pathlib import Path
+
+    data = Path(__file__).resolve().parents[1] / "examples/data"
+    manifests = [p for p in data.glob("*.json")
+                 if "fixture_sha256" in json.loads(p.read_text())]
+    assert len(manifests) == 2
+    for path in manifests:
+        manifest = json.loads(path.read_text())
+        assert (
+            hashlib.sha256((data / manifest["fixture"]).read_bytes()).hexdigest()
+            == manifest["fixture_sha256"]
+        )
 
 
 def test_lightkurve_without_errors():

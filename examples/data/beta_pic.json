@@ -1,0 +1,32 @@
+{
+  "target": "TIC 270577175",
+  "selection": {
+    "mission": "TESS",
+    "author": "SPOC",
+    "exptime": 120,
+    "sector": 6
+  },
+  "data_uri": "mast:TESS/product/tess2018349182500-s0006-0000000270577175-0126-s_lc.fits",
+  "product": "tess2018349182500-s0006-0000000270577175-0126-s_lc.fits",
+  "sha256": "d877f0cfc355f469bd7ba1ef925cfefe940f0312950b9235696fc008b96b7583",
+  "time_format": "btjd",
+  "time_scale": "tdb",
+  "quality_bitmask": "default",
+  "flux_column": "PDCSAP_FLUX",
+  "source": "https://mast.stsci.edu/",
+  "n_points": 14682,
+  "time_min": 1468.273598025441,
+  "time_max": 1490.0456837077816,
+  "window_days": [
+    1483.0,
+    1489.0
+  ],
+  "normalization": 5508319.0,
+  "fixture": "beta_pic.csv",
+  "fixture_sha256": "e2def97226dea77302c680380288d05eb5a76b8678ad24c9bac2d97dc6bca6d8",
+  "fixture_n_points": 4306,
+  "reference": "https://doi.org/10.1051/0004-6361/201935552",
+  "redistribution": "Small derived subset of publicly available NASA Kepler/TESS mission data; cite mission, MAST and original analysis.",
+  "retrieved_date": "2026-11-10",
+  "quality_integer_mask": 17087
+}

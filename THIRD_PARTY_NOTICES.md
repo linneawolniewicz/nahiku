@@ -45,3 +45,13 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
+
+## Documentation inspiration and data
+
+Documentation organization is inspired by exoplanet (https://docs.exoplanet.codes/).
+Its prose and figures have not been copied into this documentation. The PyData theme
+and scientific dependencies retain their own licenses.
+
+Example observation subsets derive from public NASA Kepler/TESS data served by MAST.
+Their manifests identify the products and transformations; cite the missions, MAST,
+Lightkurve, and the source analyses. Software licensing does not replace data attribution.

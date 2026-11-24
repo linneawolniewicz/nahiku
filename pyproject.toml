@@ -32,7 +32,7 @@ addopts = "-ra"
 line-length = 100
 
 [tool.uv.build-backend]
-source-include = ["tests/**", "uv.lock"]
+source-include = ["examples/**", "docs/**", "tests/**", "scripts/**", "CITATION.cff", "CHANGELOG.md", "CONTRIBUTING.md", "JOSS_CHECKLIST.md", "paper.bib", ".readthedocs.yaml", ".github/workflows/**", "uv.lock"]
 source-exclude = ["src/nahiku/exhaustive_helpers.py", "docs/_build/**", "docs/examples/data", "examples/outputs/**", "docs/tutorials/outputs/**", "**/__pycache__/**", "**/.ipynb_checkpoints/**"]
 wheel-exclude = ["nahiku/exhaustive_helpers.py"]
 
