@@ -240,3 +240,31 @@ def test_min_remaining_stop_and_boundary_seeds():
     assert result.mask.sum() == 2
     assert result.settings["stop_reason"] == "min_remaining"
     assert result.candidates[0]["start"] == 0 or result.candidates[0]["stop"] == 12
+
+
+@pytest.mark.parametrize("backend", ["numpy", "torch"])
+@pytest.mark.parametrize("bounds", [(0, 2), (10, 12), (22, 24)])
+def test_interval_exclusion_preserves_complement_and_observations(backend, bounds):
+    """Exclude only the accepted interval, including intervals at either boundary."""
+    flux = np.zeros(24)
+    start, stop = bounds
+    flux[start:stop] = -1
+    lc = lightcurve(flux)
+    observed = (lc.time.copy(), lc.flux.copy(), lc.flux_err.copy())
+    result = lc.greedy_search(
+        backend=backend, growth="threshold", sigma=2, grow_sigma=1,
+        len_deviant=2, direction="negative", max_events=1,
+    )
+    # Keep every observation outside the half-open detected interval available.
+    expected = np.zeros(len(flux), dtype=bool)
+    expected[start:stop] = True
+    np.testing.assert_array_equal(result.mask, expected)
+    assert (~result.mask).sum() == len(flux) - (stop - start)
+    for original, current in zip(observed, (lc.time, lc.flux, lc.flux_err)):
+        np.testing.assert_array_equal(current, original)
+    # Compare the reported prediction with direct conditioning on the complement.
+    mean, std = lc._fit.predict(
+        lc.time, ~expected, include_noise=True, errors=lc.flux_err
+    )
+    np.testing.assert_allclose(result.mean, mean, atol=1e-8)
+    np.testing.assert_allclose(result.std, std, atol=1e-8)
