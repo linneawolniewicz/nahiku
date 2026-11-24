@@ -1,0 +1,7 @@
+{
+  "source_commit": "dac885e1f48100572a843e639b15a80f8b06b834",
+  "source_path": "src/nahiku/balmung.py",
+  "author": "Dan Hey",
+  "purpose": "Numerical and algorithm-identity test reference; not imported by the package",
+  "documented_patch": "find_highest_peak returns nu[imax], not p[imax], for a boundary peak"
+}

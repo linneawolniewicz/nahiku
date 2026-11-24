@@ -1,404 +1,326 @@
-import gc
+"""Exhaustive conditional interval detection."""
+
 import time
-import torch
-import gpytorch
-import warnings
 import numpy as np
-import matplotlib.pyplot as plt
-
-from search import Search
-from exhaustive_helpers import precompute_precision, interval_posterior_from_precision, compute_interval_pvalue
-
-from gpytorch.mlls import ExactMarginalLogLikelihood
+from .gp_helpers import condition, condition_precision
+from .search import interval_score, validate_direction, directional
+from .results import SearchResult
+from .numerics import stable_cholesky
 
 
-class ExhaustiveSearch(Search):
+def exhaustive_search(
+    owner,
+    *,
+    min_points=3,
+    max_points=20,
+    step=2,
+    size_step=2,
+    metric="pvalue",
+    threshold=1e-5,
+    top_k=None,
+    direction="negative",
+    acceleration=True,
+    refit=False,
+    gap_factor=5.0,
+    backend="torch",
+    warm_initialization=True,
+):
+    """Identify anomalous intervals in a time series using Gaussian Processes.
+
+    Method:
+        1. List every candidate contiguous interval based on the configured
+           minimum/maximum lengths and window steps. For each length, also test
+           the window ending at the final observation, even if the start-position
+           step would omit it. Skip any window containing a time gap greater
+           than ``gap_factor`` times the median spacing between observations.
+        2. Use the GP already fitted to the entire time series with ``fit_gp``.
+           Optionally cache its full precision matrix for accelerated conditioning.
+        3. For each candidate interval, compute its conditional observation
+           distribution from a GP conditioned on the rest of the data. With
+           ``refit=True``, fit the retained observations independently for each
+           interval; warm initialization uses the full-data hyperparameters.
+        4. Evaluate the selected test metric on the held-out interval, retaining
+           its full covariance for joint metrics. Precision acceleration and
+           direct conditioning implement the same conditional distribution at
+           fixed hyperparameters; refitting requires ``acceleration=False``.
+        5. Filter by the requested residual sign and flag intervals passing the
+           metric threshold, or select ``top_k`` ranked non-overlapping intervals.
+           Smaller p-value/log-likelihood scores and larger loss/distance scores
+           indicate stronger anomalies; the metric definitions specify the direction.
+        6. Merge selected intervals into a detection mask. Compute the final
+           display prediction outside that union using the full-data fitted
+           hyperparameters, even when individual candidate scores used refits.
+        7. Return an independent ``SearchResult`` containing every tested interval
+           and score, the detection mask, final prediction, and numerical diagnostics.
+
+    Selected windows retain their exact scored mean, observation covariance and
+    uncertainty, plus full-grid conditional predictions in ``conditional_predictions``.
+    ``result.plot()`` shows representatives; ``selection="all"`` shows all selected
+    windows, and ``event_index=0`` shows one representative over the full light curve.
+    These plots need no live GP or repeated refit. Storage and full-grid prediction
+    costs grow with the number of selected windows. Refitted searches evaluate
+    eligible full-grid predictions while each candidate model is available.
+
+    Torch and NumPy support direct and accelerated conditioning. Failed precision
+    conditioning retries directly; covariance jitter is bounded and recorded.
+
+    :param owner: Light-curve object with a current GP fit; supplies observations and provenance.
+    :type owner: Nahiku
+    :param min_points: Minimum candidate interval length in samples.
+    :type min_points: int
+    :param max_points: Maximum candidate length in samples; smaller than the full light curve.
+    :type max_points: int
+    :param step: Positive sample spacing between candidate start positions; also include the
+        terminal window.
+    :type step: int
+    :param size_step: Positive spacing between candidate lengths; also include max_points.
+    :type size_step: int
+    :param metric: "pvalue", "ll" (joint held-out log density), or "mll" (mean pointwise
+        marginal held-out log density): smaller is stronger. "mahalanobis", "nlpd",
+        "msll" (pointwise loss relative to a retained-data Gaussian), or "rmse": larger
+        is stronger. MLL differs from the retained prior MLL used in greedy growth.
+    :type metric: str
+    :param threshold: Inclusive score cutoff; set to None when using top_k. P-value cutoffs lie in
+        [0, 1].
+    :type threshold: float or None
+    :param top_k: Maximum number of ranked non-overlapping intervals; requires threshold=None.
+    :type top_k: int or None
+    :param direction: Sign of the mean residual across a candidate window: "negative" (default),
+            "positive", or "both". Individual samples need not all have that sign.
+    :type direction: str
+    :param acceleration: Reuse the full precision matrix for interval conditioning; requires
+        refit=False.
+    :type acceleration: bool
+    :param refit: Retrain GP hyperparameters on retained samples instead of using the original
+        fitted parameters.
+    :type refit: bool
+    :param gap_factor: Positive multiplier of median cadence defining gaps that detections must not
+        bridge.
+    :type gap_factor: float
+    :param backend: "torch" (default) conditions on the fit device; "numpy" uses SciPy on CPU.
+        Scores are returned and evaluated as NumPy values with either backend.
+    :type backend: str
+    :param warm_initialization: Start each interval refit from the full-data fitted parameters,
+        independently of other intervals. False uses fresh configured initialization.
+        Optimizer state is new each time. Only used when refit=True.
+    :type warm_initialization: bool
+    :returns: Independent snapshot of detections, predictions, scores, settings, and provenance.
+    :rtype: SearchResult
     """
-        This class implements an exhaustive search algorithm to identify anomalous intervals in a time series using Gaussian Processes.
-
-        Method:
-            1. List every possible contiguous interval in the time series that could contain an anomaly, based on priors (e.g., minimum and maximum anoamly duration).
-            2. Fit the entire time series with a GP and store the optimized parameters (and, optionally, the full precision matrix if using dynamic programming).
-            3. For each candidate interval, compute the posterior likelihood of the test interval given a MultivariateNormal distribution fit to the rest of the data.
-               Optionally, use dynamic programming to compute the posterior likelihoods more efficiently by leveraging the precision matrix of the full GP fit.
-            4. Flag intervals as anomalous if a metric measuring posterior likelihood is below a certain threshold (e.g. mahalanobis distance below some threshold)
-    """
-    def __init__(
-        self,
-        x,                 # Map to Search.x
-        y,                 # Map to Search.y
-        dominant_period,   # Map to Search.dominant_period
-        device="cpu",      # Map to Search.device
-        min_anomaly_len=50,
-        max_anomaly_len=100,
-        window_slide_step=100,
-        window_size_step=50,
-        assume_independent=True,
-        which_test_metric="pval",
+    # Validate interval settings and enforce mutually exclusive selection modes.
+    start_clock = time.perf_counter()
+    validate_direction(direction)
+    if backend not in ("numpy", "torch"):
+        raise ValueError("backend must be numpy or torch")
+    if not isinstance(warm_initialization, bool):
+        raise ValueError("warm_initialization must be bool")
+    n = len(owner.time)
+    for value in (min_points, max_points, step, size_step):
+        if not isinstance(value, (int, np.integer)) or value < 1:
+            raise ValueError("Window lengths and steps must be positive integers")
+    if min_points > max_points or max_points >= n:
+        raise ValueError("Require min_points <= max_points < number of samples")
+    if metric not in ("pvalue", "mahalanobis", "nlpd", "rmse", "msll", "mll", "ll"):
+        raise ValueError("Unsupported metric")
+    if gap_factor <= 0:
+        raise ValueError("gap_factor must be positive")
+    if (threshold is None) == (top_k is None):
+        raise ValueError("Supply exactly one of threshold or top_k (set threshold=None for top_k)")
+    if top_k is not None and (not isinstance(top_k, int) or top_k < 1):
+        raise ValueError("top_k must be a positive integer")
+    if threshold is not None and (
+        not np.isfinite(threshold) or (metric == "pvalue" and not 0 <= threshold <= 1)
     ):
-        """
-        Initialize the ExhaustiveSearch class and the base Search class with the provided parameters.
-        
-        :param x (np.ndarray): x array of the light curve
-        :param y (np.ndarray): y array of the light curve
-        :param dominant_period (float): dominant period of the light curve
-        :param device (str): device to use for GP modeling (default: "cpu")
-        :param min_anomaly_len (int): minimum length of candidate anomalous intervals (default: 1)
-        :param max_anomaly_len (int): maximum length of candidate anomalous intervals (default: 400)
-        :param window_slide_step (int): step size for sliding the window across the time series (default: 1)
-        :param window_size_step (int): step size for varying the size of the candidate intervals (default: 1)
-        :param assume_independent (bool): if True, assumes independence between points for speed. False is not yet implemented and will be ignored for now. (default: True)
-        :param which_test_metric (str): metric to use for evaluating the likelihood of test intervals. 
-               Options are 'pval', 'mahalanobis', 'nlpd', 'msll', 'rmse', 'mll', or default is 'll' (log-likelihood)
-        """
+        raise ValueError("Invalid threshold")
+    if refit and acceleration:
+        raise ValueError("Refitting requires acceleration=False")
+    # Prepare the fitted covariance, optional precision cache, and observing-gap mask.
+    fit = owner._require_fit()
+    numerical_diagnostics = [dict(event, source="base_fit") for event in fit.numerical_diagnostics]
+    smaller_is_stronger = metric in ("pvalue", "ll", "mll")
+    precision = fit.precision if acceleration and backend == "numpy" else None
+    if backend == "torch":
+        import torch
+        from .torch_backend import TorchConditioner, condition_torch
 
-        # Initialize the Base Search class
-        # This handles self.x, self.y, self.x_tensor, self.y_tensor, and self.device
-        # It also intializes self.num_detected_anomalies, self.flagged_anomalous, self.flagged_anomalous_signal, and self.runtime
-        super().__init__(
-            x=x,
-            y=y,
-            dominant_period=dominant_period,
-            device=device
-        )
-
-        # Initialize parameters
-        self.min_anomaly_len = min_anomaly_len
-        self.max_anomaly_len = max_anomaly_len
-        self.window_slide_step = window_slide_step
-        self.window_size_step = window_size_step
-        self.assume_independent = assume_independent
-        self.which_test_metric = which_test_metric
-        self.num_steps = len(x)
-
-        # Check that min_anomaly_len is at least 1 and that max_anomaly_len is at least min_anomaly_len
-        if min_anomaly_len < 1:
-            warnings.warn("min_anomaly_len must be at least 1. Setting min_anomaly_len to 1.")
-            self.min_anomaly_len = 1
-        if max_anomaly_len < min_anomaly_len:
-            warnings.warn("max_anomaly_len must be at least min_anomaly_len. Setting max_anomaly_len to 10 x min_anomaly_len.")
-            self.max_anomaly_len = 10 * self.min_anomaly_len
-
-        # Possible candidate intervals
-        self.intervals = []
-        for start in range(0, self.num_steps - min_anomaly_len, window_slide_step):
-            for end in range(
-                start + min_anomaly_len,
-                min(start + max_anomaly_len, self.num_steps),
-                window_size_step,
-            ):
-                self.intervals.append((start, end))
-
-        # Initialize variables to store results
-        self.metrics = []
-        self.pos_or_neg_intervals = []
-
-    def search_for_anomaly(
-        self,
-        filename="",
-        refit=False,
-        neg_anomaly_only=False,
-        pos_anomaly_only=False, 
-        dynamic_programming=False, 
-        threshold=1e-3,
-        num_intervals_to_flag=None,
-        silent=True,
-        plot=False,
-        **kwargs
-    ):
-        """
-        Main function to perform the exhaustive search for anomalies in the time series data.
-        
-        :param filename (str): If provided, saves the results to this file (default: "")
-        :param refit (bool): If true, refit the GP for each interval. If false, use the same GP for all intervals (faster but less accurate) (default: False)
-        :param neg_anomaly_only (bool): Whether to only flag negative anomalies (i.e., dips) instead of both positive and negative anomalies (default: False)
-        :param pos_anomaly_only (bool): Whether to only flag positive anomalies (i.e., flares) instead of both positive and negative anomalies (default: False)
-        :param dynamic_programming (bool): If true, use dynamic programming to find the best interval. Only works if refit = False (default: False)
-        :param threshold (float): Threshold for flagging an interval as anomalous based on the test metric (default: 1e-5)
-        :param num_intervals_to_flag (int or None): If not None, flag the top num_intervals_to_flag intervals as anomalous based on the test metric, instead of using a threshold (default: None)
-        :param silent (bool): If true, suppresses print statements during training (default: True)
-        :param plot (bool): If true, plots the GP prediction and p-value for each candidate interval (default: False)
-        **kwargs: Additional keyword arguments to pass to the GP training function, such as training_iterations, lr, early_stopping, etc.
-        """
-        start_time = time.time()
-
-        # Check that both threshold and num_intervals_to_flag are not provided at the same time
-        if threshold is not None and num_intervals_to_flag is not None:
-            warnings.warn("Both threshold and num_intervals_to_flag are provided. Only one can be used. Setting num_intervals_to_flag to None and using threshold for flagging anomalous intervals.")
-            num_intervals_to_flag = None
-
-        # Check that if dynamic_programming is True, then refit must be False
-        if dynamic_programming and refit:
-            warnings.warn("Dynamic programming only works if refit is False. Setting refit to False.")
-            refit = False
-
-        # Check if dynamic_programming is True, then which_test_metric must be "pval" or "mahalanobis"
-        if dynamic_programming and self.which_test_metric not in ["pval", "mahalanobis"]:
-            warnings.warn("Dynamic programming only works with pval or mahalanobis metrics. Setting self.which_test_metric to 'pval'.")
-            self.which_test_metric = "pval"
-
-        # Initialize
-        self.min_metric = np.inf
-        self.best_interval = None
-
-        # Write metrics to txt file if filename is provided
-        if filename == "":
-            save_to_txt = False
-        else:
-            # Create txt file to save results
-            save_to_txt = True
-
-            # write header
-            with open(filename, "w") as f:
-                f.write("start,end,metric\n")
-
-        # Initialize kernel, likelihood, and mean based on self.dominant_period
-        init_kernel = self.build_kernel()
-        init_mean = self.build_mean()
-        init_likelihood = self.build_likelihood()
-
-        # If not refitting at each iteration, fit the GP to the entire data once and save the kernel parameters
-        if not refit:
-            # Build GP model on full x and y data
-            model, likelihood, _, _ = self.build_gp_model(x=self.x_tensor, y=self.y_tensor)
-
-            # Train model to get initial fit
-            model, likelihood, _ = self.train_gp(
-                gp_model=model,
-                likelihood=likelihood,
-                x=self.x_tensor,
-                y=self.y_tensor,
-                device=self.device,
-                **kwargs
+        # Keep the full covariance and optional precision on the selected device throughout search.
+        predictor = TorchConditioner(fit, numerical_diagnostics)
+        tensor_options = dict(dtype=fit.torch_dtype, device=fit.device)
+        if acceleration:
+            factor, predictor.cov = stable_cholesky(
+                predictor.cov, numerical_diagnostics, "exhaustive full observation covariance"
             )
-
-            # Update kernel and mean with learned parameters
-            kernel = model.covar_module
-            mean = model.mean_module
-
-            # If using dynamic programming, precompute and cache the precision matrix for the full dataset
-            if dynamic_programming:
-                mu_full, J_full = precompute_precision(
-                    full_x = self.x_tensor, 
-                    mean_module = mean,
-                    kernel_module = kernel,
-                    noise_variance = model.likelihood.noise.item(),
-                    dtype = torch.float64,  # or float32
-                    device = self.device,
-                )
-
-        # Iterate over each possible anomaly interval
-        for start, end in self.intervals:
-            # Create train and test masks
-            mask_train = np.ones(self.num_steps, dtype=bool)
-            mask_train[start:end] = False
-            mask_test = ~mask_train
-
-            # Create train data without interval
-            x_train = torch.tensor(self.x[mask_train], dtype=torch.float32).to(self.device)
-            y_train = torch.tensor(self.y[mask_train], dtype=torch.float32).to(self.device)
-            
-            # Create test data with interval
-            x_test = torch.tensor(self.x[mask_test], dtype=torch.float32).to(self.device)
-            y_test = torch.tensor(self.y[mask_test], dtype=torch.float32).to(self.device)
-
-            # If refitting at each iteration, fit the GP to the training data without the interval
+            precision = torch.cholesky_inverse(factor)
+    gap = np.diff(owner.time) > gap_factor * np.median(np.diff(owner.time))
+    candidates = []
+    conditional_records = {}
+    # Enumerate interval widths and starting positions, including both terminal bounds.
+    lengths = sorted(set(range(min_points, max_points + 1, size_step)) | {max_points})
+    for width in lengths:
+        starts = sorted(set(range(0, n - width + 1, step)) | {n - width})
+        for a in starts:
+            b = a + width
+            if gap[a : b - 1].any():
+                continue
+            # Hold out each gap-free interval and condition its prediction on all other samples.
+            test = np.arange(a, b)
+            train = np.r_[0:a, b:n]
+            current = (
+                owner._refit_subset(train, initial_fit=fit if warm_initialization else None)
+                if refit
+                else fit
+            )
             if refit:
-                if 'model' in locals():
-                    del likelihood
-
-                model, likelihood, _, _ = self.build_gp_model(x_train, y_train, kernel=init_kernel, mean=init_mean, likelihood=init_likelihood, device=self.device) # Note: initializing from previous hyperparameters
-
-                # Train GP on training data
-                model, likelihood, _ = self.train_gp(
-                    gp_model=model,
-                    likelihood=likelihood,
-                    x=x_train,
-                    y=y_train,
-                    device=self.device,
-                    **kwargs
+                numerical_diagnostics.extend(
+                    dict(event, source=f"refit interval [{a}, {b})")
+                    for event in current.numerical_diagnostics
                 )
-
-                # Evaluate metric for prediction on test data
-                model.eval()
-                likelihood.eval()
-
-                # Compute p-value for the interval
-                with torch.no_grad(), gpytorch.settings.fast_pred_var():
-                    f_pred = model(x_test)
-                    y_pred = likelihood(f_pred)
-
-            else:
-                if dynamic_programming:
-                    # Use precomputed precision to get posterior on test interval
-                    y_pred = interval_posterior_from_precision(
-                        mu = mu_full,
-                        J = J_full,
-                        full_y = self.y_tensor,
-                        mask_train = mask_train,
-                        mask_test = mask_test,
-                        dtype = J_full.dtype, 
+            if backend == "torch":
+                if refit:
+                    covariance, mean = owner._full_prior(current)
+                    prediction, cov = condition_torch(
+                        torch.as_tensor(covariance, **tensor_options),
+                        torch.as_tensor(mean, **tensor_options),
+                        predictor.flux,
+                        train,
+                        test,
+                        diagnostics=numerical_diagnostics,
                     )
-
                 else:
-                    # Don't refit; but create a new GP model over train data with previously optimized parameters
-                    model, likelihood, _, _ = self.build_gp_model(x_train, y_train, kernel=kernel, mean=mean, likelihood=likelihood, device=self.device) # Note: initializing from previous hyperparameters
-                    
-                    # Evaluate metric for prediction on test data
-                    model.eval()
-                    likelihood.eval()
-
-                    # Compute p-value for the interval
-                    with torch.no_grad(), gpytorch.settings.fast_pred_var():
-                        f_pred = model(x_test)
-                        y_pred = likelihood(f_pred)
-
-            # Store as positive or negative interval based on whether the mean prediction is above or below the observed values in the test interval
-            if np.mean(y_test.cpu().numpy() - y_pred.mean.cpu().numpy()) <= 0:
-                self.pos_or_neg_intervals.append(-1)
+                    prediction, cov = condition_torch(
+                        predictor.cov,
+                        predictor.mean,
+                        predictor.flux,
+                        train,
+                        test,
+                        precision,
+                        numerical_diagnostics,
+                    )
+            elif refit:
+                # Evaluate the newly fitted prior at every original timestamp.
+                covariance, mean = owner._full_prior(current)
+                prediction, cov = condition(
+                    covariance, mean, owner.flux, train, test, numerical_diagnostics
+                )
+            elif acceleration:
+                prediction, cov = condition_precision(
+                    precision,
+                    fit.prior_mean,
+                    owner.flux,
+                    test,
+                    cov=fit.cov,
+                    diagnostics=numerical_diagnostics,
+                )
             else:
-                self.pos_or_neg_intervals.append(1)
-
-            # Depending on which_test_metric, compute the appropriate metric to evaluate the likelihood of the test interval under the model trained on the train interval
-            if self.which_test_metric == "pval" or self.which_test_metric == "mahalanobis":
-                maha_dist, p_value = compute_interval_pvalue(y_test, y_pred)
-
-                if self.which_test_metric == "pval":
-                    interval_metric = p_value
-                else:
-                    interval_metric = maha_dist
-
-            else:
-                # These metrics are computed pointwise, so we compute them for each point in the interval and then average them to get a single metric for the interval
-                metric_sum = 0
-                for i in range(end - start):
-                    # For each point in the interval, calculate the metric and sum them up
-                    x_curr = x_test[i].unsqueeze(0)
-                    y_curr = y_test[i].unsqueeze(0)
-
-                    with torch.no_grad(), gpytorch.settings.fast_pred_var():
-                        f_pred = model(x_curr)
-                        y_pred = likelihood(f_pred)
-
-                    if self.which_test_metric == "nlpd":
-                        metric = gpytorch.metrics.negative_log_predictive_density(
-                            y_pred, y_curr
-                        )
-
-                    elif self.which_test_metric == "msll":
-                        metric = gpytorch.metrics.mean_standardized_log_loss(y_pred, y_curr)
-
-                    elif self.which_test_metric == "rmse":
-                        pred_mean = y_pred.mean.cpu().numpy()
-                        metric = np.sqrt(np.mean((pred_mean - y_curr.cpu().numpy()) ** 2))
-
-                    elif self.which_test_metric == "mll":
-                        mll_func = ExactMarginalLogLikelihood(likelihood, model)
-                        metric = mll_func(f_pred, y_curr)
-
-                    else:  # Default to log-likelihood
-                        metric = y_pred.log_prob(y_curr)
-
-                    metric_sum += metric
-
-                # Calculate the mean of the metric over the interval
-                interval_metric = metric_sum / (end - start)
-
-            # Save the metric for the interval
-            self.metrics.append(interval_metric)
-
-            # Check if the current interval is the best one
-            if interval_metric < self.min_metric:
-                self.min_metric = interval_metric
-                self.best_interval = (start, end)
-
-            # Print results for the interval if not silent
-            if not silent:
-                print(
-                    f"Anomaly interval: {start}-{end}, metric {self.which_test_metric} over the interval: {interval_metric}, pos or neg: {self.pos_or_neg_intervals[-1]}"
+                prediction, cov = condition(
+                    fit.cov, fit.prior_mean, owner.flux, train, test, numerical_diagnostics
                 )
-
-            if plot:
-                if dynamic_programming:
-                    # Create a train GP model just to get the kernel and mean for plotting; but we won't use it for inference
-                    model = model, likelihood, _, _ = self.build_gp_model(x_train, y_train, kernel=kernel, mean=mean, likelihood=likelihood, device=self.device)
-
-                    # Evaluate metric for prediction on test data
-                    model.eval()
-                    likelihood.eval()
-
-                # Compute predictions for plotting
-                with torch.no_grad(), gpytorch.settings.fast_pred_var():
-                    f_pred = model(self.x_tensor)
-                    y_pred = likelihood(f_pred)
-                    pred_mean = y_pred.mean.cpu().numpy()
-                    one_stdev = y_pred.stddev.cpu().numpy()
-
-                # Plot the results
-                plt.figure(figsize=(8, 5))
-                plt.title(f"p-value: {interval_metric:.0e}")
-                plt.fill_between(
-                    self.x, pred_mean - one_stdev, pred_mean + one_stdev, alpha=0.5
+            # Keep each tested score and residual sign for later ranking and inspection.
+            score = interval_score(
+                owner.flux[test],
+                prediction,
+                cov,
+                metric,
+                reference_flux=owner.flux[train],
+                diagnostics=numerical_diagnostics,
+            )
+            candidates.append(
+                dict(
+                    start=int(a),
+                    stop=int(b),
+                    score=score,
+                    mean_residual=float(np.mean(owner.flux[test] - prediction)),
                 )
-                plt.scatter(self.x, self.y, c='black', s=3, alpha=0.5, label="Observed")
-                plt.scatter(
-                    self.x[start:end], self.y[start:end], c='red', marker='x', s=10, alpha=0.8, label="Held Out Interval"
-                )
-                plt.plot(self.x, pred_mean, lw=1, alpha=0.7, label="Predicted $\pm$ 1 $\sigma$")
-
-                plt.xlabel("Time")
-                plt.ylabel("Flux")
-                plt.xlim(min(self.x), max(self.x))
-                plt.legend()
-
-                plt.show()
-
-            # Save results to txt if save_to_txt is True
-            if save_to_txt:
-                with open(filename, "a") as f:
-                    f.write(f"{start},{end},{interval_metric}\n")
-
-            # Delete all variables to free up memory
-            if 'model' in locals():
-                del model
-            
-            if 'f_pred' in locals():
-                del f_pred
-
-            del x_train
-            del y_train
-            del y_pred
-            del interval_metric
-            del mask_train
-            del mask_test
-            del x_test
-            del y_test
-            gc.collect()
-            torch.cuda.empty_cache()
-
-
-        # After iterating through all intervals, update self.num_detected_anomalies, self.flagged_anomalous, and self.anomalous_signal based on the intervals found
-        if threshold is not None:
-            # Flag intervals as anomalous if their metric is below the threshold
-            for i, metric in enumerate(self.metrics):
-                # If metric is a tensor, convert to scalar
-                if isinstance(metric, torch.Tensor):
-                    metric = metric.detach().cpu().numpy().item()
-
-                if metric < threshold:
-                    start, end = self.intervals[i]
-                    self.flagged_anomalous[start:end] = True
-                    self.anomalous_signal[start:end] = metric
-                    self.num_detected_anomalies += 1
-
-        elif num_intervals_to_flag is not None:            
-            # Flag the top num_intervals_to_flag intervals as anomalous based on the metric
-            sorted_indices = np.argsort(self.metrics)
-            for i in range(min(num_intervals_to_flag, len(self.intervals))):
-                idx = sorted_indices[i]
-                start, end = self.intervals[idx]
-                self.flagged_anomalous[start:end] = True
-                self.anomalous_signal[start:end] = self.metrics[idx]
-                self.num_detected_anomalies += 1
-
-        self.runtime = time.time() - start_time
+            )
+            # Preserve the exact scored distribution for potentially selected windows.
+            candidate = candidates[-1]
+            passes = threshold is None or (score <= threshold if smaller_is_stronger else score >= threshold)
+            if passes and directional(candidate["mean_residual"], direction):
+                record = dict(candidate, mean=prediction.copy(),
+                              std=np.sqrt(np.maximum(np.diag(cov), 0)), covariance=cov.copy())
+                # A refitted model must be evaluated before it leaves scope; never refit for plotting.
+                if refit:
+                    full_predictor = TorchConditioner(current, numerical_diagnostics) if backend == "torch" else current
+                    record["full_mean"], record["full_std"] = full_predictor.predict(
+                        owner.time, include_noise=True, errors=owner.flux_err)
+                conditional_records[(a, b)] = record
+    # Filter by residual direction and rank deterministically by score and interval bounds.
+    eligible = [c for c in candidates if directional(c["mean_residual"], direction)]
+    ranked = sorted(
+        eligible,
+        key=lambda c: ((c["score"] if smaller_is_stronger else -c["score"]), c["start"], c["stop"]),
+    )
+    if top_k is not None:
+        # Top-k means non-overlapping intervals, rather than near-duplicate windows.
+        # Apply the inclusive metric threshold when a top-k selection was not requested.
+        chosen = []
+        for c in ranked:
+            if all(c["stop"] <= d["start"] or d["stop"] <= c["start"] for d in chosen):
+                chosen.append(c)
+            if len(chosen) == top_k:
+                break
+    else:
+        # Apply the inclusive metric threshold when a top-k selection was not requested.
+        chosen = [
+            c
+            for c in ranked
+            if (c["score"] <= threshold if smaller_is_stronger else c["score"] >= threshold)
+        ]
+    # Merge selected intervals into one sample mask for the final display prediction.
+    mask = np.zeros(n, bool)
+    for c in chosen:
+        mask[c["start"] : c["stop"]] = True
+    # Store full-grid predictions only for selected fixed-parameter windows.
+    selected_predictions = []
+    for candidate in chosen:
+        a, b = candidate["start"], candidate["stop"]
+        record = conditional_records[(a, b)]
+        if not refit:
+            retained = np.ones(n, bool)
+            retained[a:b] = False
+            full_predictor = predictor if backend == "torch" else fit
+            record["full_mean"], record["full_std"] = full_predictor.predict(
+                owner.time, retained, include_noise=True, errors=owner.flux_err)
+        # Use the exact scored distribution within the excluded interval.
+        record["full_mean"][a:b] = record["mean"]
+        record["full_std"][a:b] = record["std"]
+        selected_predictions.append(record)
+    # A coherent display fit conditioned outside the union of flagged samples.
+    display = predictor if backend == "torch" else fit
+    previous_records = len(fit.numerical_diagnostics)
+    mean, std = display.predict(owner.time, ~mask, include_noise=True, errors=owner.flux_err)
+    numerical_diagnostics.extend(
+        dict(event, source="display prediction")
+        for event in fit.numerical_diagnostics[previous_records:]
+    )
+    settings = dict(
+        numerical_diagnostics=numerical_diagnostics,
+        backend=backend,
+        warm_initialization=warm_initialization,
+        min_points=min_points,
+        max_points=max_points,
+        step=step,
+        size_step=size_step,
+        metric=metric,
+        threshold=threshold,
+        top_k=top_k,
+        direction=direction,
+        acceleration=acceleration,
+        refit=refit,
+        gap_factor=gap_factor,
+        display_prediction="fixed hyperparameters conditioned outside detected union",
+    )
+    # Return a self-contained snapshot of observations, candidates, and search provenance.
+    return SearchResult(
+        "exhaustive",
+        owner.time.copy(),
+        owner.flux.copy(),
+        mean,
+        std,
+        mask,
+        candidates,
+        settings,
+        time.perf_counter() - start_clock,
+        owner._provenance(),
+        conditional_predictions=selected_predictions,
+    )

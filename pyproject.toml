@@ -1,35 +1,56 @@
 [project]
 name = "nahiku"
-version = "0.1.0"
-description = "Add your description here"
+version = "0.2.0"
+description = "Gaussian-process anomaly detection in stellar light curves"
 readme = "README.md"
-authors = [
-    { name = "Linnea Wolniewicz", email = "linnea@wolniewicz.com" }
-]
+authors = [{name = "Linnea Wolniewicz", email = "linnea@wolniewicz.com"}]
 requires-python = ">=3.12"
-dependencies = [
-    "astropy==6.1.0",
-    "astroquery==0.4.11",
-    "lightkurve==2.5.0",
-    "matplotlib==3.8.4",
-    "numpy==1.26.4",
-    "pandas==2.2.2",
-    "scipy==1.13.1",
-    "torch==2.3.1",
-    "torchaudio==2.3.1",
-    "torchvision==0.18.1",
-]
+license = "MIT"
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
+dependencies = ["numpy>=1.26,<3", "scipy>=1.13,<2", "astropy>=6.1,<8", "matplotlib>=3.8,<4", "torch>=2.3,<3", "gpytorch>=1.13,<2", "tqdm>=4.66,<5"]
+
+[project.optional-dependencies]
+data = ["lightkurve>=2.5,<3"]
+test = ["pytest>=8,<10", "pytest-cov>=5,<8"]
+docs = ["sphinx>=8,<9", "pydata-sphinx-theme>=0.16,<0.17", "myst-nb>=1.2,<2", "nbformat>=5.10,<6", "nbclient>=0.10,<1", "ipykernel>=6,<7"]
+dev = ["nahiku[data,test,docs]", "build>=1.2,<2", "ruff>=0.11,<1"]
+
+[project.urls]
+Repository = "https://github.com/linneawolniewicz/nahiku"
+Issues = "https://github.com/linneawolniewicz/nahiku/issues"
 
 [build-system]
 requires = ["uv_build>=0.10.6,<0.11.0"]
 build-backend = "uv_build"
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["integration: real archived observation tests (opt in)"]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 100
+
+[tool.uv.build-backend]
+source-include = ["tests/**", "uv.lock"]
+source-exclude = ["src/nahiku/exhaustive_helpers.py", "docs/_build/**", "docs/examples/data", "examples/outputs/**", "docs/tutorials/outputs/**", "**/__pycache__/**", "**/.ipynb_checkpoints/**"]
+wheel-exclude = ["nahiku/exhaustive_helpers.py"]
+
 [[tool.uv.index]]
-name = "pytorch-cu118"
-url = "https://download.pytorch.org/whl/cu118"
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
 explicit = true
 
 [tool.uv.sources]
-torch = [{ index = "pytorch-cu118" }]
-torchvision = [{ index = "pytorch-cu118" }]
-torchaudio = [{ index = "pytorch-cu118" }]
+torch = [{index = "pytorch-cpu", marker = "sys_platform != 'darwin'"}]
+
+[tool.coverage.run]
+branch = true
+source = ["nahiku"]
+# This retained research helper is excluded from both wheel and source distributions.
+omit = ["*/nahiku/exhaustive_helpers.py"]
+
+[tool.coverage.report]
+show_missing = true
+precision = 2
+fail_under = 90

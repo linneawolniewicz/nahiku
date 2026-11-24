@@ -1,6 +1,10 @@
 """
 This code originally developed by Dan Hey at https://github.com/danhey/balmung/blob/master/balmung/balmung.py
 This file is used with permission for the development of the Nahiku package.
+The numerical algorithm follows the collaborator-provided implementation recorded
+in commit dac885e1f48100572a843e639b15a80f8b06b834. Local changes are documentation,
+comments, and returning frequency instead of amplitude for a boundary peak.
+See THIRD_PARTY_NOTICES.md for attribution and license.
 """
 
 import numpy as np
@@ -11,11 +15,14 @@ import tqdm
 
 class Balmung:
     def __init__(self, time: np.ndarray, flux: np.ndarray):
-        """The big cheese. does prewhitening
+        """Initialize median-centered observations and empty prewhitening state.
 
-        Args:
-            time (np.ndarray): Time values
-            flux (np.ndarray): Flux value corresponding to `time`
+        :param time: Timestamps in days, on the input time reference.
+        :type time: array-like
+        :param flux: Flux samples in consistent linear units, aligned with time.
+        :type flux: array-like
+        :returns: None
+        :rtype: None
         """
         self.time = time
         self.flux = flux - np.median(flux)
@@ -24,6 +31,25 @@ class Balmung:
 
     def prewhiten(self, fmin=None, fmax=None, minimum_snr=0, maxiter=200, diagnose=True):
         # Calculate initial amplitude spectrum
+        """Iteratively remove fitted pulsations using Balmung’s fixed initial amplitude threshold.
+
+        :param fmin: Lower frequency bound; None uses the inverse baseline.
+        :type fmin: float or None
+        :param fmax: Upper frequency bound; None uses half the inverse median cadence.
+        :type fmax: float or None
+        :param minimum_snr: Amplitude cutoff multiplier of the initial median spectrum.
+        :type minimum_snr: float
+        :param maxiter: Maximum number of removal iterations.
+        :type maxiter: int
+        :param diagnose: Reserved diagnostic flag; currently has no effect.
+        :type diagnose: bool
+        :returns: None; residuals and removed parameters are updated in place.
+        :rtype: None
+
+        The component fit jointly optimizes frequency, amplitude, and phase.
+        Frequency spectra use the original fivefold oversampling. Optimizer errors
+        propagate to the caller; no partial result is silently returned.
+        """
         freq, amp = self.amplitude_spectrum(self.time, self.residual, fmin=fmin, fmax=fmax)
 
         # # Estimate noise level:
@@ -54,18 +80,15 @@ class Balmung:
 
         if diagnose:
             pass
-            # Do some diagnostic shit
+            # Diagnostic plotting is available through the plotting methods.
 
     def fit(self, theta: list) -> np.ndarray:
-        """Small wrapper for curve_fit.
+        """Fit one cosine component to the current residuals.
 
-        Args:
-            time (np.ndarray): Time values
-            flux (np.ndarray): Flux values
-            theta (list): Array-like of initial guesses
-
-        Returns:
-            list: Fitted parameters
+        :param theta: Initial frequency, amplitude, and phase guesses.
+        :type theta: array-like
+        :returns: Fitted frequency, nonnegative amplitude, and phase.
+        :rtype: numpy.ndarray
         """
         popt, _ = curve_fit(
             self.model, self.time, self.residual, p0=theta, jac=self.grad_model
@@ -81,16 +104,18 @@ class Balmung:
     def grad_model(
         self, time: np.ndarray, freq: float, amp: float, phi: float
     ) -> np.ndarray:
-        """Gradient function of our pulsation model
+        """Evaluate the cosine model Jacobian.
 
-        Args:
-            time (np.ndarray): Time values
-            freq (float): Frequency
-            amp (float): Amplitude
-            phi (float): Phase
-
-        Returns:
-            np.ndarray: Gradient vector (dModel/d_{freq,amp,phi})
+        :param time: Timestamps in days, on the input time reference.
+        :type time: array-like
+        :param freq: Frequency in cycles per day.
+        :type freq: float
+        :param amp: Cosine amplitude in flux units.
+        :type amp: float
+        :param phi: Cosine phase in radians.
+        :type phi: float
+        :returns: One row per sample and columns for frequency, amplitude, and phase.
+        :rtype: numpy.ndarray
         """
         factor = 2 * np.pi * freq * time + phi
         return np.array(
@@ -102,31 +127,34 @@ class Balmung:
         ).T
 
     def model(self, time:np.ndarray, freq:float, amp:float, phi:float) -> np.ndarray:
-        """And at the heart of it all, a tiny model function.
+        """Evaluate a single cosine pulsation.
 
-        Args:
-            time (np.ndarray): Time values
-            freq (float): Frequency
-            amp (float): Amplitude
-            phi (float): Phase
-
-        Returns:
-            np.ndarray: Sinusoid at the given parameters
+        :param time: Timestamps in days, on the input time reference.
+        :type time: array-like
+        :param freq: Frequency in cycles per day.
+        :type freq: float
+        :param amp: Cosine amplitude in flux units.
+        :type amp: float
+        :param phi: Cosine phase in radians.
+        :type phi: float
+        :returns: Model flux at each timestamp.
+        :rtype: numpy.ndarray
         """
         return amp * np.cos((2 * np.pi * freq * time) + phi)
 
     def estimate_background(
         self, x: np.ndarray, y: np.ndarray, log_width: float = 0.01
     ) -> np.ndarray:
-        """Estimates the background signal
+        """Average overlapping logarithmic-window medians.
 
-        Args:
-            x (np.ndarray): [description]
-            y (np.ndarray): [description]
-            log_width (float, optional): [description]. Defaults to 0.01.
-
-        Returns:
-            [type]: [description]
+        :param x: Positive, increasing frequency grid.
+        :type x: numpy.ndarray
+        :param y: Amplitude values aligned with x.
+        :type y: numpy.ndarray
+        :param log_width: Half-width of each window in log10 frequency.
+        :type log_width: float
+        :returns: Background estimate at each frequency; uncovered bins divide by zero.
+        :rtype: numpy.ndarray
         """
         count = np.zeros(len(x), dtype=int)
         bkg = np.zeros_like(x)
@@ -139,14 +167,14 @@ class Balmung:
         return bkg / count
 
     def find_highest_peak(self, f: np.ndarray, a: np.ndarray) -> float:
-        """Uses three point parabolic interpolation to find the highest peaks in the amplitude spectrum
+        """Interpolate the largest spectral peak using its two neighbors.
 
-        Args:
-            f (np.ndarray): Frequency values
-            a (np.ndarray): Amplitude values
-
-        Returns:
-            float: Maximum frequency
+        :param f: Frequency grid.
+        :type f: numpy.ndarray
+        :param a: Amplitude spectrum aligned with f.
+        :type a: numpy.ndarray
+        :returns: Interpolated peak frequency, or the grid frequency at a boundary peak.
+        :rtype: float
         """
         nu, p = f, a
         nu, p = np.atleast_1d(nu, p)
@@ -156,9 +184,10 @@ class Balmung:
 
         # Determine the frequency value by parabolic interpolation
         if imax == 0 or imax == p.size - 1:
-            nu_peak = p[imax]
+            # At a boundary, select its frequency rather than its amplitude.
+            nu_peak = nu[imax]
         else:
-            # Get values around the maximum. This is kinda gross
+            # Get the neighboring samples around the spectral maximum.
             frq1 = nu[imax - 1]
             frq2 = nu[imax]
             frq3 = nu[imax + 1]
@@ -175,17 +204,20 @@ class Balmung:
     def amplitude_spectrum(
         self, t, y, fmin: float = None, fmax: float = None, oversample_factor: float = 5.0,
     ) -> tuple:
-        """Calculates the amplitude spectrum at a given time and flux input
+        """Calculate a Lomb–Scargle amplitude spectrum.
 
-        Args:
-            t (np.ndarray): Time values
-            y (np.ndarray): Flux values
-            fmin (float, optional): Minimum frequency. Defaults to None.
-            fmax (float, optional): Maximum frequency. Defaults to None.
-            oversample_factor (float, optional): Amount by which to oversample the light curve. Defaults to 5.0.
-
-        Returns:
-            tuple: Frequency and amplitude arrays
+        :param t: Observation timestamps in days.
+        :type t: numpy.ndarray
+        :param y: Observed flux aligned with t.
+        :type y: numpy.ndarray
+        :param fmin: Minimum frequency; None uses the inverse baseline.
+        :type fmin: float or None
+        :param fmax: Maximum frequency; None uses half the inverse median cadence.
+        :type fmax: float or None
+        :param oversample_factor: Frequency-grid oversampling relative to the inverse baseline.
+        :type oversample_factor: float
+        :returns: Frequency and amplitude arrays.
+        :rtype: tuple
         """
         # t, y = self.time, self.residual
         tmax = t.max()
@@ -207,20 +239,30 @@ class Balmung:
         return freq, amp
 
     def dft_phase(self, x: np.ndarray, y: np.ndarray, f: float) -> float:
-        """Calculates the phase at a single frequency using the Discrete Fourier Transform
+        """Estimate phase from sine and cosine Fourier projections.
 
-        Args:
-            x (np.ndarray): Time values
-            y (np.ndarray): Flux values
-            f (float): Frequency
-
-        Returns:
-            float: Phase at given frequency
+        :param x: Timestamps in days.
+        :type x: numpy.ndarray
+        :param y: Flux aligned with x.
+        :type y: numpy.ndarray
+        :param f: Frequency in cycles per day.
+        :type f: float
+        :returns: Fourier phase in radians.
+        :rtype: float
         """
         expo = 2.0 * np.pi * f * x
         return np.arctan2(np.sum(y * np.sin(expo)), np.sum(y * np.cos(expo)))
 
     def initialize_guess(self, fmin: float, fmax: float):
+        """Estimate the strongest component frequency, amplitude, and phase.
+
+        :param fmin: Positive lower frequency bound in cycles per day.
+        :type fmin: float
+        :param fmax: Upper frequency bound in cycles per day; greater than fmin.
+        :type fmax: float
+        :returns: Initial frequency, amplitude, and phase.
+        :rtype: tuple
+        """
         time, flux = self.time, self.residual
         f, a = self.amplitude_spectrum(time, flux, fmin=fmin, fmax=fmax, oversample_factor=5.0)
 
@@ -235,6 +277,13 @@ class Balmung:
         return f0, a0, phi0
 
     def plot_lc(self, ax=None):
+        """Plot the median-centered input light curve.
+
+        :param ax: Axes to draw on; None creates a new figure and axes.
+        :type ax: matplotlib.axes.Axes or None
+        :returns: Axes containing the light curve.
+        :rtype: matplotlib.axes.Axes
+        """
         if ax is None:
             fig, ax = plt.subplots()
         ax.plot(self.time, self.flux)
@@ -243,6 +292,13 @@ class Balmung:
         return ax
 
     def plot_residual(self, ax=None):
+        """Plot the current prewhitened residuals.
+
+        :param ax: Axes to draw on; None creates a new figure and axes.
+        :type ax: matplotlib.axes.Axes or None
+        :returns: Axes containing residual flux.
+        :rtype: matplotlib.axes.Axes
+        """
         if ax is None:
             fig, ax = plt.subplots()
         ax.plot(self.time, self.residual)
@@ -251,6 +307,13 @@ class Balmung:
         return ax
 
     def plot(self, ax=None):
+        """Plot the original amplitude spectrum and removed components.
+
+        :param ax: Axes to draw on; None creates a new figure and axes.
+        :type ax: matplotlib.axes.Axes or None
+        :returns: Axes containing the spectrum; requires at least one removed component.
+        :rtype: matplotlib.axes.Axes
+        """
         if ax is None:
             _, ax = plt.subplots()
         f, a = self.amplitude_spectrum(self.time, self.flux)

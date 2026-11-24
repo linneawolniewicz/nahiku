@@ -1,417 +1,425 @@
+"""Configurable residual seeding and interval growth with conditional GP updates."""
+
 import time
-import torch
-import gpytorch
-import warnings
 import numpy as np
-import matplotlib.pyplot as plt
+from scipy.linalg import cho_solve
+from .numerics import stable_cholesky, numpy_factor
+from .results import SearchResult
+from .search import validate_direction
 
-from search import Search
 
-from gpytorch.mlls import ExactMarginalLogLikelihood
-from scipy.ndimage import minimum_filter1d
+def _growth_loss(owner, fit, retained, mean, std, metric, backend, diagnostics=None):
+    """Evaluate a per-sample loss on the retained observations; smaller is better.
 
-class GreedySearch(Search):
+    :param owner: Light curve supplying observations and measurement errors.
+    :type owner: Nahiku
+    :param fit: GP supplying fixed hyperparameters for this trial.
+    :type fit: GPFit
+    :param retained: Boolean selection on the original observation grid.
+    :type retained: numpy.ndarray
+    :param mean: Full-grid posterior mean conditioned on retained samples.
+    :type mean: numpy.ndarray
+    :param std: Full-grid posterior observation standard deviation.
+    :type std: numpy.ndarray
+    :param metric: "mll", "nlpd", "msll", or "rmse".
+    :type metric: str
+    :param backend: "torch" or "numpy" for dense Gaussian calculations.
+    :type backend: str
+    :param diagnostics: Numerical recovery event collector; None emits warnings.
+    :type diagnostics: list or None
+    :returns: Scalar loss normalized by the retained sample count.
+    :rtype: float
     """
-        This class implements a greedy search algorithm to identify anomalous intervals in a time series using Gaussian Processes.
-
-        Method:
-            1. Perform GP regression on the time series.
-            2. Find the most significant outlier interval (based on sum of residuals) of length len_deviant.
-            3. Exclude the outlier interval and redo regression. See if GP improves by some threshold.
-            4. Expand outlier interval in both directions by expansion_param and redo step 3.
-            5. Repeat step 4 as long as GP improves the fit by some threshold.
-            6. If no improvement, define anomaly signal as the difference between data and regression in the outlier interval of points.
-            7. Repeat steps 2-6 while there are still points above the num_sigma_threshold.
-    """
-    def __init__(
-        self,
-        x,                 # Map to Search.x
-        y,                 # Map to Search.y
-        dominant_period,   # Map to Search.dominant_period
-        device="cpu",      # Map to Search.device
-        which_grow_metric="mll",
-        y_err=None,
-        num_sigma_threshold=3,
-        expansion_param=1,
-        len_deviant=1,
-    ):
-        """
-        Initialize the GreedySearch class and the base Search class with the provided parameters.
-        
-        :param x (np.ndarray): x array of the light curve
-        :param y (np.ndarray): y array of the light curve
-        :param dominant_period (float): dominant period of the light curve
-        :param device (str): device to use for GP modeling (default: "cpu")
-        :param which_grow_metric (str): Metric to use for evaluating improvement when expanding the anomalous region. Options are 'nlpd', 'msll', 'rmse', 'mll'. Default is 'mll'.
-        :param y_err (np.ndarray or None): 1D array of observational errors. If None, assumes zero error for all points.
-        :param num_sigma_threshold (float): Threshold in terms of standard deviations for identifying anomalies. Default is 3.
-        :param expansion_param (int): Number of indices to expand the anomalous region on each side during the greedy search. Default is 1.
-        :param len_deviant (int): Length of the interval to consider for identifying the most significant outlier. Default is 1.
-        """
-
-        # Initialize the Base Search class
-        # This handles self.x, self.y, self.x_tensor, self.y_tensor, and self.device
-        # It also intializes self.num_detected_anomalies, self.flagged_anomalous, self.flagged_anomalous_signal, and self.runtime
-        super().__init__(
-            x=x,
-            y=y,
-            dominant_period=dominant_period,
-            device=device
-        )
-
-        # If y_err is not provided, set y_err = 0 for all points
-        if y_err is None:
-            print(
-                "No y_err provided. Using y_err = 0 for all points. Note that y_err is only used for calculating residuals, not in GP training."
+    y = owner.flux[retained]
+    residual = y - mean[retained]
+    if metric == "rmse":
+        return float(np.sqrt(np.mean(residual**2)))
+    if metric == "msll":
+        # Compare pointwise predictive log loss with a constant Gaussian baseline.
+        variance = np.maximum(std[retained] ** 2, np.finfo(float).tiny)
+        baseline = max(float(np.var(y)), np.finfo(float).tiny)
+        return float(
+            0.5
+            * np.mean(
+                np.log(variance / baseline)
+                + residual**2 / variance
+                - (y - y.mean()) ** 2 / baseline
             )
-            self.y_err = np.zeros_like(y)
-        else:
-            self.y_err = y_err
+        )
+    # MLL uses the prior observation covariance; NLPD uses the retained posterior.
+    if np.array_equal(fit.time, owner.time[retained]):
+        covariance, prior = fit.cov, fit.prior_mean
+    else:
+        covariance = fit.cov[np.ix_(retained, retained)]
+        prior = fit.prior_mean[retained]
+    residual = y - prior if metric == "mll" else residual
+    if backend == "torch":
+        import torch
 
-        # Save copies of x, y, and y_err
-        self.x_orig = x
-        self.y_orig = y
-        self.y_err_orig = y_err
-
-        # Initialize variables
-        self.num_sigma_threshold = num_sigma_threshold
-        self.expansion_param = expansion_param
-        self.which_grow_metric = which_grow_metric
-
-        # Check that len_deviant is valid
-        if len_deviant <= 0:
-            warnings.warn("len_deviant must be greater than 0. Setting len_deviant = 1.")
-            self.len_deviant = 1
-        else:
-            self.len_deviant = len_deviant
-
-    def plot_greedy(self, x, pred_mean, left_edge, right_edge, residuals):
-        """
-        Plot the light curve, GP fit, and detected anomalies at each iteration of the greedy search.
-
-        :param x (torch.Tensor): x values used for GP prediction at the current iteration. Only needed to plot against pred_mean
-                Every other plotting call will use self.x or self.x_orig
-        :param pred_mean (np.ndarray): Array of the GP mean predictions corresponding to self.x at the current iteration
-        :param left_edge (int): Left edge index of the currently flagged anomalous region
-        :param right_edge (int): Right edge index of the currently flagged anomalous region
-        :param residuals (np.ndarray): Array of residuals (absolute value of observed - predicted) for the current iteration
-        """
-
-        fig, axs = plt.subplots(2, 1, sharex=True, figsize=(8, 8))
-
-        # Plot the GP mean prediction vs. data
-        axs[0].axvspan(
-            self.x[left_edge],
-            self.x[right_edge],
-            color="green",
-            alpha=0.4,
-            label="New Flagged Anomaly",
+        options = dict(dtype=fit.torch_dtype, device=fit.device)
+        matrix = torch.as_tensor(covariance, **options)
+        vector = torch.as_tensor(residual, **options)
+        factor, _ = stable_cholesky(matrix, diagnostics, "greedy growth covariance")
+        if metric == "nlpd":
+            noise = np.full(len(y), fit.noise_variance)
+            if owner.flux_err is not None:
+                noise += owner.flux_err[retained] ** 2
+            kernel = matrix - torch.diag(torch.as_tensor(noise, **options))
+            matrix = matrix - kernel @ torch.cholesky_solve(kernel, factor)
+            factor, _ = stable_cholesky(
+                matrix, diagnostics, "greedy growth posterior covariance"
+            )
+        quadratic = vector @ torch.cholesky_solve(vector[:, None], factor)[:, 0]
+        logdet = 2 * torch.log(torch.diagonal(factor)).sum()
+        return float((quadratic + logdet + len(y) * np.log(2 * np.pi)).item() / (2 * len(y)))
+    factor = numpy_factor(covariance, diagnostics, "greedy growth covariance")
+    if metric == "nlpd":
+        noise = np.full(len(y), fit.noise_variance)
+        if owner.flux_err is not None:
+            noise += owner.flux_err[retained] ** 2
+        kernel = covariance - np.diag(noise)
+        covariance = covariance - kernel @ cho_solve(factor, kernel)
+        factor = numpy_factor(covariance, diagnostics, "greedy growth posterior covariance")
+    return float(
+        (
+            residual @ cho_solve(factor, residual)
+            + 2 * np.log(np.diag(factor[0])).sum()
+            + len(y) * np.log(2 * np.pi)
         )
-        axs[0].scatter(
-            self.x_orig, 
-            self.y_orig, 
-            c='black', 
-            s=3, 
-            alpha=0.5,
-            label="Observed"
-        )
-        axs[0].scatter(
-            self.x_orig[left_edge:right_edge],
-            self.y_orig[left_edge:right_edge],
-            c='red', 
-            s=10, 
-            marker='x', 
-            alpha=0.8, 
-        )
-        axs[0].scatter(
-            self.x_orig[(self.flagged_anomalous == 1)],
-            self.y_orig[(self.flagged_anomalous == 1)],
-            c='red', 
-            s=10, 
-            marker='x', 
-            alpha=0.8, 
-            label="Flagged as Anomalous",
-        )
-        axs[0].plot(
-            x, pred_mean, lw=1, alpha=0.7, label="GP Mean Prediction"
-        )
-        axs[0].set_ylim(
-            np.min(self.y_orig), np.max(self.y_orig)
-        )
-        axs[0].legend()
-        axs[0].set_xlim(np.min(self.x_orig), np.max(self.x_orig))
-        axs[0].set_xlabel("Time")
-        axs[0].set_ylabel("Flux")
-
-        # Plot the residuals
-        axs[1].axvspan(
-            self.x[left_edge],
-            self.x[right_edge],
-            color="green",
-            alpha=0.4,
-            label="New Flagged Anomaly",
-        )
-        axs[1].plot(
-            self.x,
-            self.threshold,
-            "--",
-            lw=3,
-            alpha=0.8,
-            color="gold",
-            label=f"Threshold = {self.num_sigma_threshold} "
-            + r"$\sqrt{\text{var} + \text{err}^2}$",
-        )
-        axs[1].scatter(
-            self.x,
-            residuals, 
-            c='black', 
-            s=3, 
-            alpha=0.5,
-            label="|Observed - GP Mean Prediction|"
-        )
-        axs[1].scatter(
-            self.x[left_edge:right_edge],
-            residuals[left_edge:right_edge],
-            c='red', 
-            s=10, 
-            marker='x', 
-            alpha=0.8, 
-            label="New Flagged as Anomalous",
-        )
-        axs[1].legend()
-        axs[1].set_xlim(np.min(self.x_orig), np.max(self.x_orig))
-        axs[1].set_xlabel("Time")
-        axs[1].set_ylabel("Flux")
-        plt.tight_layout()
-        plt.show()
+        / (2 * len(y))
+    )
 
 
-    def search_for_anomaly(
-        self,
-        refit=False,  
-        neg_anomaly_only=False,
-        pos_anomaly_only=False, 
-        plot=False,
-        detection_range=None,
-        update_threshold=False,
-        **kwargs
+def greedy_search(
+    owner,
+    *,
+    sigma=3.0,
+    grow_sigma=2.0,
+    max_events=None,
+    direction="both",
+    refit=False,
+    gap_factor=None,
+    backend="torch",
+    seed_statistic="residual",
+    len_deviant=1,
+    growth="metric",
+    growth_metric="mll",
+    expansion_param=1,
+    warm_initialization=True,
+    update_threshold=False,
+    min_remaining=3,
+):
+    """Identify anomalous intervals in a time series using Gaussian Processes.
+
+    Method:
+        1. Use the GP regression already fitted to the time series with ``fit_gp``.
+        2. Find the strongest qualifying outlier interval of length ``len_deviant``.
+           Rank qualifying intervals by their minimum residual strength, using
+           ordinary posterior residuals or standardized leave-one-out residuals.
+        3. Exclude the outlier interval and redo the regression prediction. With
+           ``refit=True``, retrain the GP on retained observations; warm initialization
+           starts from the preceding accepted hyperparameters by default.
+        4. For ``growth="metric"``, expand the outlier interval in both directions
+           by ``expansion_param`` and repeat step 3. Evaluate the chosen fitting
+           metric on the retained observations.
+        5. Repeat step 4 as long as the metric improves. Keep the last improving
+           interval. Alternatively, ``growth="threshold"`` extends through same-sign
+           neighbors above ``grow_sigma``, without refitting at each extension.
+        6. Flag the accepted interval and exclude its observations from later seeds.
+           Apply the selected sign restriction and optional observing-gap barrier.
+        7. Repeat steps 2–6 while a qualifying interval remains above ``sigma``,
+           unless ``max_events`` or ``min_remaining`` stops the search. Residual
+           thresholds stay fixed unless ``update_threshold=True``; LOO uses its
+           current conditional uncertainty.
+        8. Return the final regression, residuals, and accepted intervals in an
+           independent ``SearchResult``. Greedy candidates exclude rejected growth
+           trials; adjacent accepted intervals can merge into one reported event.
+
+    Both conditioning backends use the same detection rules. Numerical recovery
+    is bounded and recorded separately from learned observation noise.
+
+    :param owner: Light curve with a current fitted GP.
+    :type owner: Nahiku
+    :param sigma: Seed threshold multiplier for residual scatter or standardized LOO residuals.
+    :type sigma: float
+    :param grow_sigma: Neighbor threshold used only for threshold growth; positive and no greater than sigma. Heterogeneous measurement errors contribute to its scale.
+    :type grow_sigma: float
+    :param max_events: Maximum seeded events; None runs until no qualifying seed remains,
+        subject to min_remaining. Adjacent seeded events can merge in the output mask.
+    :type max_events: int or None
+    :param direction: "both" compares absolute deviations; "negative" or "positive" selects a sign.
+    :type direction: str
+    :param refit: Optimize hyperparameters for each candidate exclusion in metric growth,
+        or after each accepted threshold-grown event.
+    :type refit: bool
+    :param gap_factor: Stop seeds and growth across gaps exceeding this multiple of median
+        cadence; None disables the gap barrier.
+    :type gap_factor: float or None
+    :param backend: "torch" (default, on the fit device) or "numpy" (SciPy on CPU).
+    :type backend: str
+    :param seed_statistic: "residual" uses ordinary posterior residuals and
+        sqrt(error**2 + var(abs(residual))); "loo" uses GP leave-one-out z scores.
+    :type seed_statistic: str
+    :param len_deviant: Number of consecutive qualifying samples required for a seed;
+        rank windows by their minimum directional residual strength.
+    :type len_deviant: int
+    :param growth: "metric" expands exclusions while retained-data loss improves;
+        "threshold" extends through same-sign neighbors above grow_sigma.
+    :type growth: str
+    :param growth_metric: Retained-data loss for metric growth: "mll" (negative normalized
+        marginal log likelihood), "nlpd" (joint predictive loss), "msll", or "rmse".
+    :type growth_metric: str
+    :param expansion_param: Samples added at each available edge per metric-growth trial.
+    :type expansion_param: int
+    :param warm_initialization: Start refits from the preceding accepted GP parameters.
+        False uses the configured initial parameters. Optimizer state is always new.
+    :type warm_initialization: bool
+    :param update_threshold: Recompute residual scatter after each accepted event; False
+        freezes initial scatter. Only available for seed_statistic="residual". LOO always
+        uses its current conditional uncertainty and the fixed sigma multiplier.
+    :type update_threshold: bool
+    :param min_remaining: Minimum observations retained for conditioning and refitting; an integer of at least two, default three.
+    :type min_remaining: int
+    :returns: Independent predictions, detections, settings, stop reason, and provenance.
+    :rtype: SearchResult
+    """
+    if backend not in ("numpy", "torch"):
+        raise ValueError("backend must be 'numpy' or 'torch'")
+    validate_direction(direction)
+    if seed_statistic not in ("residual", "loo") or growth not in ("metric", "threshold"):
+        raise ValueError(
+            "seed_statistic must be residual or loo; growth must be metric or threshold"
+        )
+    if growth_metric not in ("mll", "nlpd", "msll", "rmse"):
+        raise ValueError("growth_metric must be mll, nlpd, msll, or rmse")
+    if not np.isfinite(sigma) or sigma <= 0:
+        raise ValueError("sigma must be positive and finite")
+    if growth == "threshold" and (not np.isfinite(grow_sigma) or not 0 < grow_sigma <= sigma):
+        raise ValueError("Require 0 < grow_sigma <= sigma")
+    for name, value, minimum in (
+        ("len_deviant", len_deviant, 1),
+        ("expansion_param", expansion_param, 1),
+        ("min_remaining", min_remaining, 2),
+        ("max_events", max_events, 1),
     ):
-        """
-        Main function to perform the greedy search for anomalies in the time series data.
-        
-        :param refit (bool): Whether to refit the GP model at each iteration of the greedy search (default: True)
-        :param neg_anomaly_only (bool): Whether to only flag negative anomalies (i.e., dips) instead of both positive and negative anomalies (default: False)
-        :param pos_anomaly_only (bool): Whether to only flag positive anomalies (i.e., flares) instead of both positive and negative anomalies (default: False)
-        :param plot (bool): Whether to the light curve, GP fit, and detected anomalies at each iteration of the greedy search (default: False)
-        :param detection_range (tuple or None): Tuple specifying the range of x values to consider for anomaly detection. If None, considers the entire range of x. Default is None.
-        :param update_threshold (bool): Whether to update the num_sigma_threshold after each detected anomaly
-        **kwargs: Additional keyword arguments to pass to the GP training function, such as training_iterations, lr, early_stopping, etc.
-        """
-        start_time = time.time()
+        if name == "max_events" and value is None:
+            continue
+        if isinstance(value, bool) or not isinstance(value, (int, np.integer)) or value < minimum:
+            raise ValueError(f"{name} must be an integer >= {minimum}")
+    if gap_factor is not None and (not np.isfinite(gap_factor) or gap_factor <= 0):
+        raise ValueError("gap_factor must be positive and finite, or None")
+    for flag in (refit, warm_initialization, update_threshold):
+        if not isinstance(flag, bool):
+            raise ValueError("refit, warm_initialization, and update_threshold must be bool")
+    if update_threshold and seed_statistic != "residual":
+        raise ValueError("update_threshold applies only to the residual seed statistic")
+    # Keep original indices throughout and start with an independent event mask.
+    clock = time.perf_counter()
+    base = owner._require_fit()
+    numerical_diagnostics = [dict(event, source="base_fit") for event in base.numerical_diagnostics]
+    from .torch_backend import TorchConditioner
 
-        # Build GP model on full x and y data
-        model, likelihood, _, _ = self.build_gp_model(x=self.x_tensor, y=self.y_tensor)
+    n = len(owner.time)
+    mask = np.zeros(n, bool)
+    gap = (
+        np.zeros(n - 1, bool)
+        if gap_factor is None
+        else (np.diff(owner.time) > gap_factor * np.median(np.diff(owner.time)))
+    )
+    candidates = []
+    settings = dict(
+        sigma=sigma,
+        grow_sigma=grow_sigma,
+        max_events=max_events,
+        direction=direction,
+        refit=refit,
+        gap_factor=gap_factor,
+        backend=backend,
+        seed_statistic=seed_statistic,
+        len_deviant=len_deviant,
+        growth=growth,
+        growth_metric=growth_metric,
+        expansion_param=expansion_param,
+        warm_initialization=warm_initialization,
+        update_threshold=update_threshold,
+        min_remaining=min_remaining,
+    )
 
-        # Train model to get initial fit
-        model, likelihood, _ = self.train_gp(
-            gp_model=model,
-            likelihood=likelihood,
-            x=self.x_tensor,
-            y=self.y_tensor,
-            device=self.device,
-            **kwargs
+    def evaluate(excluded, previous):
+        """Condition or refit one exclusion trial without mutating the accepted fit.
+
+        :param excluded: Boolean mask on the full observation grid.
+        :type excluded: numpy.ndarray
+        :param previous: Accepted GP supplying warm-start parameters.
+        :type previous: GPFit
+        :returns: Fitted GP, predictor, training mask, full-grid mean and uncertainty.
+        :rtype: tuple
+        """
+        fit = (
+            owner._refit_subset(
+                np.flatnonzero(~excluded), initial_fit=previous if warm_initialization else None
+            )
+            if refit and excluded.any()
+            else base
         )
+        if fit is not base:
+            numerical_diagnostics.extend(
+                dict(event, source="refit") for event in fit.numerical_diagnostics
+            )
+        previous_records = len(fit.numerical_diagnostics)
+        predictor = fit if backend == "numpy" else TorchConditioner(fit, numerical_diagnostics)
+        training = None if refit and excluded.any() else ~excluded
+        mean, std = predictor.predict(
+            owner.time, training, include_noise=True, errors=owner.flux_err
+        )
+        numerical_diagnostics.extend(
+            dict(event, source="prediction")
+            for event in fit.numerical_diagnostics[previous_records:]
+        )
+        return fit, predictor, training, mean, std
 
-        # Update kernel and mean with learned parameters
-        kernel = model.covar_module
-        mean = model.mean_module
-
-        # Get mean prediction from the learned model
-        model.eval()
-        likelihood.eval()
-        with torch.no_grad(), gpytorch.settings.fast_pred_var():
-            observed_pred = model(self.x_tensor)
-
-        # Calculate the threshold for flagging anomalies based on the residuals and y_err
-        residuals = np.abs(self.y - observed_pred.mean.cpu().numpy())
-        residual_var = np.var(residuals)
-        sum_variances = self.y_err**2 + residual_var
-        self.threshold = self.num_sigma_threshold * np.sqrt(sum_variances)
-        exist_points_above_threshold = True
-
-        # Step 7 (repeat steps 2-6 while there are still points above the num_sigma_threshold)
-        while exist_points_above_threshold:
-            model, likelihood, _, _ = self.build_gp_model(x=self.x_tensor, y=self.y_tensor, kernel=kernel, mean=mean, likelihood=likelihood, device=self.device) # Note: initializing from previous hyperparameters
-
-            # Re-fit the GP on non-anomalous data
-            if refit:
-                model, likelihood, _ = self.train_gp(
-                    gp_model=model,
-                    likelihood=likelihood,
-                    x=self.x_tensor,
-                    y=self.y_tensor,
-                    device=self.device,
-                    **kwargs
-                )
-
-            # Get mean prediction from the learned model over x and x_orig
-            model.eval()
-            likelihood.eval()
-
-            with torch.no_grad(), gpytorch.settings.fast_pred_var():
-                observed_pred = likelihood(model(self.x_tensor))
-                pred_mean = observed_pred.mean.cpu().numpy()
-
-                pred_full_x = model(
-                    torch.tensor(self.x_orig, dtype=torch.float32).to(self.device)
-                ).mean.cpu().numpy()
-
-            # Compute the minimum value in each window of size len_deviant in the residuals array
-            residuals = np.abs(pred_mean - self.y)
-            min_values = minimum_filter1d(residuals, size=self.len_deviant, mode="nearest")
-            max_min_idx = np.argmax(min_values)
-
-            # Intialize variables for expanding anomalous region
-            left_edge = max_min_idx
-            right_edge = max_min_idx + self.len_deviant
-            diff_metric = float('inf')
-            metric = float('inf')
-
-            # Plot
-            if plot: self.plot_greedy(self.x, pred_mean, left_edge, right_edge, residuals)
-
-            # While the metric is decreasing, expand the anomalous edges
-            while diff_metric > 0:
-                # Subset x, y, and y_err by left_edge and right_edge
-                # Do not need to worry about masking by anomalous, because anomalous points are removed at the end of the loop
-                subset = (np.arange(len(self.x)) > right_edge) | (np.arange(len(self.x)) < left_edge)
-                x_sub = torch.tensor(self.x[subset], dtype=torch.float32).to(
-                    self.device
-                )
-                y_sub = torch.tensor(self.y[subset], dtype=torch.float32).to(
-                    self.device
-                )
-
-                model, likelihood, _, _ = self.build_gp_model(x=x_sub, y=y_sub, kernel=kernel, mean=mean, likelihood=likelihood, device=self.device) # Note: initializing from previous hyperparameters
-
-                # Re-fit the GP on non-anomalous data
-                if refit:
-                    model, likelihood, _ = self.train_gp(
-                        gp_model=model,
-                        likelihood=likelihood,
-                        x=x_sub,
-                        y=y_sub,
-                        device=self.device,
-                        **kwargs
-                    )
-
-                # Predict on the subset and on the full x_orig
-                model.eval()
-                likelihood.eval()
-
-                with torch.no_grad(), gpytorch.settings.fast_pred_var():
-                    observed_pred_sub = likelihood(model(x_sub))
-                    pred_mean_sub = observed_pred_sub.mean.cpu().numpy()
-                    pred_full_x = model(
-                        torch.tensor(self.x_orig, dtype=torch.float32).to(self.device)
-                    ).mean.cpu().numpy()
-
-                # Calculate metric difference
-                old_metric = metric
-
-                # NLPD loss
-                if self.which_grow_metric == "nlpd":
-                    metric = gpytorch.metrics.negative_log_predictive_density(
-                        observed_pred_sub, y_sub
-                    )
-
-                # MSLL loss
-                elif self.which_grow_metric == "msll":
-                    metric = gpytorch.metrics.mean_standardized_log_loss(
-                        observed_pred_sub, y_sub
-                    )
-
-                # RMSE loss
-                elif self.which_grow_metric == "rmse":
-                    metric = np.sqrt(
-                        np.mean((pred_mean_sub - y_sub.cpu().numpy()) ** 2)
-                    )
-
-                # MLL loss
-                else:
-                    with torch.no_grad(), gpytorch.settings.fast_pred_var():
-                        output = model(x_sub)
-                        mll_func = ExactMarginalLogLikelihood(likelihood, model)
-                        metric = mll_func(output, y_sub)
-
-                diff_metric = old_metric - metric  # smaller is better
-
-                # Expand left_edge and right_edge by expansion_param
-                if left_edge >= (0 + self.expansion_param):
-                    left_edge -= self.expansion_param
-
-                if right_edge < (len(self.x) - self.expansion_param):
-                    right_edge += self.expansion_param
-
-                # Plot
-                if plot: self.plot_greedy(x_sub, pred_mean_sub, left_edge, right_edge, residuals)
-
-            # Remove left_edge:right_edge from x, y, and y_err for the next iteration of the greedy search
-            # Handle case where left_edge = 0 or right_edge = len(self.x)
-            self.x = np.delete(self.x, np.arange(min(left_edge, 0), max(right_edge, len(self.x))))
-            self.y = np.delete(self.y, np.arange(min(left_edge, 0), max(right_edge, len(self.y))))
-            self.y_err = np.delete(self.y_err, np.arange(min(left_edge, 0), max(right_edge, len(self.y_err))))
-
-            self.x_tensor = torch.tensor(self.x, dtype=torch.float32).to(self.device)
-            self.y_tensor = torch.tensor(self.y, dtype=torch.float32).to(self.device)
-
-            # Update num_detected_anomalies, flagged_anomalous, and anomalous_signal with the new flagged anomaly from left_edge to right_edge
-            if neg_anomaly_only:
-                # Check if the average of the residuals in the flagged region is negative
-                if np.mean(self.y_orig[left_edge:right_edge] - pred_full_x[left_edge:right_edge]) <= 0:
-                    self.num_detected_anomalies += 1
-                    self.flagged_anomalous[left_edge:right_edge] = 1
-                    self.anomalous_signal[left_edge:right_edge] = minimum_filter1d(np.abs(self.y_orig[left_edge:right_edge] - pred_full_x[left_edge:right_edge]), size=self.len_deviant, mode="nearest")
-                    print(f"Anomalous edges = {left_edge}:{right_edge}")
-                else:
-                    print(f"Not flagging edges {left_edge}:{right_edge} because not a negative anomaly (mean(truth - pred) = {np.mean(self.y_orig[left_edge:right_edge] - pred_full_x[left_edge:right_edge])}), and neg_anomaly_only is {neg_anomaly_only}. Still will remove edges from GP fit.")
-            
-            elif pos_anomaly_only:
-                # Check if the average of the residuals in the flagged region is positive
-                if np.mean(self.y_orig[left_edge:right_edge] - pred_full_x[left_edge:right_edge]) >= 0:
-                    self.num_detected_anomalies += 1
-                    self.flagged_anomalous[left_edge:right_edge] = 1
-                    self.anomalous_signal[left_edge:right_edge] = minimum_filter1d(np.abs(self.y_orig[left_edge:right_edge] - pred_full_x[left_edge:right_edge]), size=self.len_deviant, mode="nearest")
-                    print(f"Anomalous edges = {left_edge}:{right_edge}")
-                else:
-                    print(f"Not flagging edges {left_edge}:{right_edge} because not a positive anomaly (mean(truth - pred) = {np.mean(self.y_orig[left_edge:right_edge] - pred_full_x[left_edge:right_edge])}), and pos_anomaly_only is {pos_anomaly_only}. Still will remove edges from GP fit.")
-
+    state = evaluate(mask, base)
+    initial_scatter = float(np.var(np.abs(owner.flux - state[3])))
+    threshold_history = []
+    stop_reason = "threshold"
+    while True:
+        if max_events is not None and len(candidates) >= max_events:
+            stop_reason = "max_events"
+            break
+        if (~mask).sum() - len_deviant < min_remaining:
+            stop_reason = "min_remaining"
+            break
+        fit, predictor, training, mean, std = state
+        available = np.flatnonzero(~mask)
+        # Match the significance scale to the selected seed statistic.
+        signed = owner.flux - mean
+        if seed_statistic == "loo":
+            if backend == "torch":
+                signed[available] = predictor.loo(training)
             else:
-                # Flag as anomalous regardless of whether it's a positive or negative anomaly
-                self.num_detected_anomalies += 1
-                self.flagged_anomalous[left_edge:right_edge] = 1
-                self.anomalous_signal[left_edge:right_edge] = minimum_filter1d(np.abs(self.y_orig[left_edge:right_edge] - pred_full_x[left_edge:right_edge]), size=self.len_deviant, mode="nearest")
-                print(f"Anomalous edges = {left_edge}:{right_edge}")
-
-            # Predict on reduced x_tensor to get new residuals for threshold checking
-            model.eval()
-            likelihood.eval()
-            with torch.no_grad(), gpytorch.settings.fast_pred_var():
-                observed_pred = model(self.x_tensor)
-
-            residuals = np.abs(self.y - observed_pred.mean.cpu().numpy())
-
-            if update_threshold:
-                # Calculate threshold
-                residual_var = np.var(residuals)
-                sum_variances = self.y_err**2 + residual_var
-                self.threshold = self.num_sigma_threshold * np.sqrt(sum_variances)
-            else:
-                # Remove points between left_edge and right_edge from the threshold
-                self.threshold = np.delete(self.threshold, np.arange(min(left_edge, 0), max(right_edge, len(self.threshold))))
-
-            # Compute the minimum value in each window of size len_deviant in the residuals array; check if there are still points above the threshold
-            min_values = minimum_filter1d(residuals, size=self.len_deviant, mode="nearest")
-            exist_points_above_threshold = np.any(min_values > self.threshold)
-
-        self.runtime = time.time() - start_time
+                covariance, prior = owner._full_prior(fit)
+                block = covariance[np.ix_(available, available)]
+                precision = cho_solve(
+                    numpy_factor(block, numerical_diagnostics, "greedy LOO retained covariance"),
+                    np.eye(len(available), dtype=block.dtype),
+                )
+                signed[available] = (
+                    precision @ (owner.flux[available] - prior[available])
+                ) / np.sqrt(np.diag(precision))
+            scale = np.ones(n)
+        else:
+            scatter = (
+                float(np.var(np.abs(signed[available]))) if update_threshold else initial_scatter
+            )
+            errors = np.zeros(n) if owner.flux_err is None else owner.flux_err
+            scale = np.sqrt(np.maximum(errors**2 + scatter, np.finfo(fit.numpy_dtype).tiny))
+            threshold_history.append(scatter)
+        directional = (
+            -signed
+            if direction == "negative"
+            else signed
+            if direction == "positive"
+            else np.abs(signed)
+        )
+        # Require an entire contiguous window to qualify, avoiding centered-window ambiguity.
+        windows = np.lib.stride_tricks.sliding_window_view(directional, len_deviant)
+        eligible = np.lib.stride_tricks.sliding_window_view(
+            (~mask) & (directional >= sigma * scale), len_deviant
+        ).all(axis=1)
+        if len_deviant > 1:
+            eligible &= ~np.lib.stride_tricks.sliding_window_view(gap, len_deviant - 1).any(axis=1)
+        strengths = np.where(eligible, windows.min(axis=1), -np.inf)
+        a = int(np.argmax(strengths))
+        if not np.isfinite(strengths[a]):
+            break
+        b = a + len_deviant
+        score = float(np.min(directional[a:b] / scale[a:b]))
+        # Threshold growth uses this iteration's fixed scale and the strongest seed's sign.
+        if growth == "threshold":
+            sign = np.sign(signed[a + np.argmax(directional[a:b])])
+            while (
+                a > 0
+                and not gap[a - 1]
+                and not mask[a - 1]
+                and sign * signed[a - 1] >= grow_sigma * scale[a - 1]
+                and (~mask).sum() - (b - a) - 1 >= min_remaining
+            ):
+                a -= 1
+            while (
+                b < n
+                and not gap[b - 1]
+                and not mask[b]
+                and sign * signed[b] >= grow_sigma * scale[b]
+                and (~mask).sum() - (b - a) - 1 >= min_remaining
+            ):
+                b += 1
+            trial = mask.copy()
+            trial[a:b] = True
+            state = evaluate(trial, fit)
+        else:
+            # Evaluate the seed exclusion, then retain only strictly improving expansions.
+            trial = mask.copy()
+            trial[a:b] = True
+            state = evaluate(trial, fit)
+            loss = _growth_loss(
+                owner,
+                state[0],
+                ~trial,
+                state[3],
+                state[4],
+                growth_metric,
+                backend,
+                numerical_diagnostics,
+            )
+            while True:
+                left, right = a, b
+                for _ in range(expansion_param):
+                    if left > 0 and not gap[left - 1] and not mask[left - 1]:
+                        left -= 1
+                    if right < n and not gap[right - 1] and not mask[right]:
+                        right += 1
+                proposed = mask.copy()
+                proposed[left:right] = True
+                if (left, right) == (a, b) or (~proposed).sum() < min_remaining:
+                    break
+                candidate = evaluate(proposed, state[0])
+                new_loss = _growth_loss(
+                    owner,
+                    candidate[0],
+                    ~proposed,
+                    candidate[3],
+                    candidate[4],
+                    growth_metric,
+                    backend,
+                    numerical_diagnostics,
+                )
+                if not np.isfinite(new_loss) or new_loss >= loss:
+                    break
+                a, b, state, loss = left, right, candidate, new_loss
+        # Commit only the accepted interval and its corresponding conditional model.
+        candidates.append(
+            dict(
+                start=a,
+                stop=b,
+                score=score,
+                mean_residual=float(np.mean(owner.flux[a:b] - mean[a:b])),
+            )
+        )
+        mask[a:b] = True
+    settings.update(
+        stop_reason=stop_reason,
+        residual_variance_history=threshold_history,
+        numerical_diagnostics=numerical_diagnostics,
+    )
+    return SearchResult(
+        "greedy",
+        owner.time.copy(),
+        owner.flux.copy(),
+        state[3],
+        state[4],
+        mask,
+        candidates,
+        settings,
+        time.perf_counter() - clock,
+        owner._provenance(),
+    )

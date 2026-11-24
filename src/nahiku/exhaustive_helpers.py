@@ -1,21 +1,34 @@
+"""Retained research helpers, excluded from the installed package.
+
+These helpers do not implement the bounded covariance-recovery policy used by
+the supported searches. Use Nahiku.exhaustive_search for maintained behavior.
+"""
+
 import torch
 from scipy.stats import chi2
-from gpytorch.lazy import NonLazyTensor
+from linear_operator.operators import DenseLinearOperator
 from gpytorch.distributions import MultivariateNormal 
 
 @torch.no_grad()
 def precompute_precision(full_x, mean_module, kernel_module, noise_variance,
                          dtype=torch.float64, device="cpu"):
-    """
-    Build μ and J = (K + σ²I)^{-1} for the *full* X once.
+    """Build μ and J = (K + σ²I)^{-1} for the *full* X once.
     Use float64 here for numerical stability; you can cast later if desired.
 
-    :param full_x (torch.Tensor): (N, D) tensor of all input locations
-    :param mean_module (GPyTorch mean module): GPyTorch mean module that can be called on full_x
-    :param kernel_module (GPyTorch kernel module): GPyTorch kernel module that can be called on full_x to produce a LazyTensor covariance
-    :param noise_variance (float): observation noise variance σ²
-    :param dtype (torch.dtype): torch dtype for computations (default: torch.float64 for stability)
-    :param device (str): torch device for computations (default: "cpu")
+    :param full_x: Full input grid, with shape (N, D).
+    :type full_x: torch.Tensor
+    :param mean_module: Callable prior mean module.
+    :type mean_module: gpytorch.means.Mean
+    :param kernel_module: Callable covariance module.
+    :type kernel_module: gpytorch.kernels.Kernel
+    :param noise_variance: Observation noise variance added to the covariance diagonal.
+    :type noise_variance: float
+    :param dtype: Floating-point dtype used for computation.
+    :type dtype: torch.dtype
+    :param device: Computation device; CPU is the default and CUDA requires an available GPU.
+    :type device: str or torch.device
+    :returns: Full-grid mean and observation precision matrix.
+    :rtype: tuple
     """
     X = full_x.to(device=device, dtype=dtype)
     N = X.shape[0]
@@ -37,18 +50,24 @@ def precompute_precision(full_x, mean_module, kernel_module, noise_variance,
 
 @torch.no_grad()
 def interval_posterior_from_precision(mu, J, full_y, mask_train, mask_test, dtype=torch.float64):
-    """
-    Compute the posterior distribution p(y_test | y_train) using precision matrix J and mean mu.
-    This function computes the conditional posterior distribution over test points given training data,
-    using the precision (inverse covariance) matrix and the prior mean. It leverages the block structure
-    of the precision matrix to efficiently compute the conditional distribution.
+    """Compute the posterior distribution p(y_test | y_train) using precision matrix J and mean mu.
+    The training and test masks must partition the full observation grid.
+    The calculation uses the corresponding blocks of the precision matrix.
 
-    :param mu (torch.Tensor): (N,) mean vector over the full grid
-    :param J (torch.Tensor): (N, N) precision matrix over the full grid, where J = (K + σ²I)^{-1}
-    :param full_y (torch.Tensor): (N,) output values on the full grid
-    :param mask_train (torch.Tensor or bool array): (N,) boolean mask indicating training data points
-    :param mask_test (torch.Tensor or bool array): (N,) boolean mask indicating test data points
-    :param dtype (torch.dtype): Data type for computations (default: torch.float64)
+    :param mu: Prior mean on the full grid, with shape (N,).
+    :type mu: torch.Tensor
+    :param J: Full observation precision matrix, with shape (N, N).
+    :type J: torch.Tensor
+    :param full_y: Observed flux on the full grid, with shape (N,).
+    :type full_y: torch.Tensor
+    :param mask_train: Boolean mask selecting conditioning observations.
+    :type mask_train: array-like
+    :param mask_test: Boolean mask selecting held-out observations.
+    :type mask_test: array-like
+    :param dtype: Accepted for compatibility; computations use mu.dtype.
+    :type dtype: torch.dtype
+    :returns: Conditional distribution over mask_test.
+    :rtype: gpytorch.distributions.MultivariateNormal
     """
     device, dtype = mu.device, mu.dtype
     mask_train = torch.as_tensor(mask_train, device=device)
@@ -78,18 +97,22 @@ def interval_posterior_from_precision(mu, J, full_y, mask_train, mask_test, dtyp
     delta = torch.cholesky_solve(rhs, L_SS).squeeze(-1) # J_SS^{-1} (J_ST (y_T - μ_T)), solved as J_SS delta = rhs; cholesky_solve(B, L) solves Ax = B where LL^T = A
     mean_S = mu[idx_S] - delta # μ_S - J_SS^{-1} J_ST (y_T - μ_T)
 
-    return MultivariateNormal(mean_S, NonLazyTensor(cov_S))
+    return MultivariateNormal(mean_S, DenseLinearOperator(cov_S))
 
 
 def compute_interval_pvalue(y_true, mvn_pred):
-    """
-    This function computes the Mahalanobis distance and corresponding p-value for a true observation under a predicted multivariate normal distribution. 
-    It attempts to compute the Mahalanobis distance using Cholesky decomposition for numerical stability, and falls back to direct solving 
-    if Cholesky fails (e.g., if the covariance is not positive definite). The p-value is computed based on the chi-squared distribution with degrees of freedom 
+    """This function computes the Mahalanobis distance and corresponding p-value for a true observation under a predicted multivariate normal distribution. 
+    It tries Cholesky factorization, then absolute diagonal jitter values from
+    1e-6 through 1e-3, and finally a generic linear solve if factorization fails.
+    The final fallback does not establish a valid positive-definite Gaussian covariance. The p-value is computed based on the chi-squared distribution with degrees of freedom 
     equal to the dimensionality of the data.
 
-    :param y_true (torch.Tensor): shape (d,)
-    :param mvn_pred (MultivariateNormal): MultivariateNormal from GPyTorch (mean: (d,), covar: (d,d))
+    :param y_true: Observed flux for the held-out interval.
+    :type y_true: torch.Tensor
+    :param mvn_pred: Conditional multivariate normal for the held-out observations.
+    :type mvn_pred: gpytorch.distributions.MultivariateNormal
+    :returns: Mahalanobis distance and chi-squared survival probability.
+    :rtype: tuple
     """
     mean = mvn_pred.mean  # shape (d,)
     cov = mvn_pred.covariance_matrix  # shape (d, d)
