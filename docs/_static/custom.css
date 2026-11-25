@@ -1,0 +1,15 @@
+/* Keep the package name compact while retaining descriptive browser titles. */
+.navbar-brand {
+  margin-right: 1.5rem;
+}
+
+/* Separate page sections and give navigation lists consistent vertical space. */
+.bd-article h2 {
+  margin-top: 2rem;
+}
+.bd-article .toctree-wrapper li {
+  margin-block: 0.45rem;
+}
+.bd-article .toctree-wrapper {
+  margin-block: 1.5rem;
+}

@@ -13,24 +13,12 @@ greedy detection, and exhaustive conditional interval scoring. Detections are st
 astrophysical evidence.
 
 ```{toctree}
-:caption: User Guide
 :maxdepth: 1
 
-user/install
-user/quickstart
-user/concepts
-user/citations
-user/computation
-user/troubleshooting
-api/index
-developer/index
-changes
-```
-
-```{toctree}
-:caption: Tutorials and examples
-:maxdepth: 1
-
-tutorials/index
-examples/index
+User Guide <user/index>
+Tutorials <tutorials/index>
+Examples <examples/index>
+API <api/index>
+Developer Guide <developer/index>
+Changelog <changes>
 ```
