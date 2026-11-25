@@ -7,7 +7,9 @@ build:
     pre_install:
       # Update the installer before resolving CPU-wheel metadata.
       - python -m pip install --upgrade pip
-      - python -m pip install "torch>=2.3,<3" --only-binary=:all: --index-url https://download.pytorch.org/whl/cpu
+      - >-
+        python -m pip install "torch>=2.3,<3" --only-binary=:all:
+        --index-url https://download.pytorch.org/whl/cpu
 sphinx:
   configuration: docs/conf.py
   fail_on_warning: true
